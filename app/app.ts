@@ -79,10 +79,53 @@ const multipart = (fields: [string, string][], file: { field: string; name: stri
 const liveTickets = new Map<number, string>();
 let liveAttempt = 0;
 let liveTicks = 0;
+// True while the live socket is open: only then can a stored answer be trusted, because the server says when something changed.
+let liveOpen = false;
 
 const OFFLINE = 'Can’t reach the server. Check your connection and try again.';
 type Answered = { ok: true; body: unknown } | { ok: false; error: string };
+// GET answers, by server, token and path. Concurrent asks for one path share a single request (a board's four
+// loaders ask the same address); while the live socket is open a good answer is reused. A data source has no clock,
+// so the socket is the limit: it is reopened (and this emptied) whenever it closes or idles out.
+// Any write, any live message, a closed socket, a new sign-in or a new server empties it, in-flight asks included,
+// so a request that began before a write is never handed out after it. Only paths the server announces changes to are kept
+// (see WATCHED in server/src/lib/liveHub.js); the rest, calendars and notifications, always go to the network.
+const WATCHED = /^\/(tasks|task-sections|task-lists|task-list-shares|task-attachments|notes|note-shares)(\/|\?|$)/;
+const answers = new Map<string, { promise: Promise<Answered>; done: boolean; ok: boolean }>();
+const forgetAnswers = (): void => {
+  answers.clear();
+};
+
 async function call(store: unknown, path: string, init: RequestInit = {}): Promise<Answered> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (method !== 'GET') {
+    forgetAnswers();
+    try {
+      return await request(store, path, init);
+    } finally {
+      forgetAnswers(); // a read begun while the write was in flight may have seen the old data
+    }
+  }
+  if (!WATCHED.test(path)) return request(store, path, init);
+  const key = `${originOf(store)}\n${bearer(store)}\n${path}`;
+  const held = answers.get(key);
+  if (held && (!held.done || (held.ok && liveOpen))) return held.promise;
+  const entry = { promise: request(store, path, init), done: false, ok: false };
+  answers.set(key, entry);
+  entry.promise.then(
+    (a) => {
+      entry.done = true;
+      entry.ok = a.ok;
+      if (!a.ok && answers.get(key) === entry) answers.delete(key);
+    },
+    () => {
+      if (answers.get(key) === entry) answers.delete(key);
+    },
+  );
+  return entry.promise;
+}
+
+async function request(store: unknown, path: string, init: RequestInit = {}): Promise<Answered> {
   const token = typeof store === 'object' && store !== null ? (store as { get(k: string): unknown }).get('token') : '';
   try {
     const res = await fetch(`${originOf(store)}${path}`, {
@@ -103,6 +146,10 @@ async function call(store: unknown, path: string, init: RequestInit = {}): Promi
     return { ok: false, error: OFFLINE };
   }
 }
+
+// One request answers a board: its sections, tasks, every task's subtasks and the people on the list.
+// loadTasks, loadBoardSubtasks, loadSections and loadMembers each read it; `call` makes them share one fetch.
+const boardOf = (store: unknown, listId: string): Promise<Answered> => callWith(store, `/tasks/board?listId=${encodeURIComponent(listId)}`);
 
 const uploadNoteImageOne = async (noteId: string, name: string, path: string, mime: string, store: unknown, storage: Storage): Promise<{ ok: boolean; url: string; error: string }> => {
   try {
@@ -461,6 +508,7 @@ const sources: Sources = {
     const r = await callWith(store, '/auth/login', { method: 'POST', body: JSON.stringify({ email, password, rememberMe: true }) });
     if (!r.ok) return reply(r);
     const b = r.body as { token: string; user: { email: string; displayName: string | null } };
+    forgetAnswers();
     (store as Store).set('token', b.token);
     (store as Store).set('name', b.user.displayName ?? b.user.email.split('@')[0]);
     (store as Store).set('email', b.user.email);
@@ -472,6 +520,7 @@ const sources: Sources = {
     const r = await callWith(store, '/auth/register', { method: 'POST', body: JSON.stringify(body) });
     if (!r.ok) return reply(r);
     const b = r.body as { token: string; user: { email: string; displayName: string | null } };
+    forgetAnswers();
     (store as Store).set('token', b.token);
     (store as Store).set('name', b.user.displayName ?? (name.trim() !== '' ? name.trim() : b.user.email.split('@')[0]));
     (store as Store).set('email', b.user.email);
@@ -482,6 +531,7 @@ const sources: Sources = {
   saveServer: ([url], store): Result<'saveServer'> => {
     const v = url.trim().replace(/\/+$/, '');
     if (v !== '' && !/^https?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/.test(v)) return { ok: false, error: 'Use an address like https://notes.example.com.' };
+    forgetAnswers();
     (store as Store).set('server', v);
     (store as Store).set('token', '');
     (store as Store).set('name', '');
@@ -489,6 +539,7 @@ const sources: Sources = {
     return { ok: true, error: '' };
   },
   signOut: (_args, store) => {
+    forgetAnswers();
     (store as Store).set('token', '');
     (store as Store).set('name', '');
     (store as Store).set('email', '');
@@ -623,7 +674,7 @@ const sources: Sources = {
   loadTasks: async ([listId], store): Promise<Result<'loadTasks'>> => {
     const owner = who(store);
     if (owner === '' || listId === '') return { owner, listId, tasks: [] };
-    const r = await callWith(store, `/tasks?listId=${encodeURIComponent(listId)}`);
+    const r = await boardOf(store, listId);
     if (!r.ok) throw new Error(r.error);
     const body = r.body as { tasks?: unknown };
     if (!Array.isArray(body.tasks) || !body.tasks.every(isTaskBody)) throw new Error('The server returned an invalid task list.');
@@ -712,7 +763,7 @@ const sources: Sources = {
   loadMembers: async ([listId], store): Promise<Result<'loadMembers'>> => {
     const owner = who(store);
     if (owner === '' || listId === '') return { owner, listId, members: [] };
-    const r = await callWith(store, `/task-list-shares/members/${encodeURIComponent(listId)}`);
+    const r = await boardOf(store, listId);
     if (!r.ok) return { owner, listId, members: [] };
     const rows = (r.body as { members?: Record<string, unknown>[] }).members ?? [];
     return { owner, listId, members: rows.map((m) => ({ id: String(m.id ?? ''), role: String(m.role ?? ''), name: String(m.displayName || m.email || ''), email: String(m.email ?? ''), icon: String(m.avatarIcon ?? ''), color: String(m.avatarColor ?? '') })) };
@@ -745,32 +796,23 @@ const sources: Sources = {
   loadBoardSubtasks: async ([listId], store): Promise<Result<'loadBoardSubtasks'>> => {
     const owner = who(store);
     if (owner === '' || listId === '') return { owner, listId, tasks: [] };
-    const r = await callWith(store, `/tasks?listId=${encodeURIComponent(listId)}`);
+    const r = await boardOf(store, listId);
     if (!r.ok) throw new Error(r.error);
-    const body = r.body as { tasks?: unknown };
-    if (!Array.isArray(body.tasks) || !body.tasks.every(isTaskBody)) throw new Error('The server returned an invalid task list.');
+    const body = r.body as { subtasks?: unknown };
+    const rows = body.subtasks ?? [];
+    if (!Array.isArray(rows) || !rows.every(isTaskBody)) throw new Error('The server returned an invalid task list.');
     const zone = deviceZone();
-    const parents = body.tasks.filter((t) => (t.subtaskCount ?? 0) > 0).map((t) => t.id);
-    const groups = await Promise.all(parents.map(async (id) => {
-      const s = await callWith(store, `/tasks?parentId=${encodeURIComponent(id)}`);
-      if (!s.ok) throw new Error(s.error);
-      const sub = s.body as { tasks?: unknown };
-      if (!Array.isArray(sub.tasks) || !sub.tasks.every(isTaskBody)) throw new Error('The server returned an invalid task list.');
-      return sub.tasks.map((t) => taskRecord(t, zone));
-    }));
-    return { owner, listId, tasks: groups.flat() };
+    return { owner, listId, tasks: rows.map((t) => taskRecord(t, zone)) };
   },
   createSubtask: async ([listId, parentId, title], store) =>
     reply(await callWith(store, '/tasks', { method: 'POST', body: JSON.stringify({ listId, parentId, title }) })),
   loadSections: async ([listId], store): Promise<Result<'loadSections'>> => {
     const owner = who(store);
     if (owner === '' || listId === '') return { owner, listId, sections: [] };
-    const r = await callWith(store, `/task-sections?listId=${encodeURIComponent(listId)}`);
+    const r = await boardOf(store, listId);
     if (!r.ok) throw new Error(r.error);
-    const t = await callWith(store, `/tasks?listId=${encodeURIComponent(listId)}`);
-    if (!t.ok) throw new Error(t.error);
-    const rawSections = (r.body as { sections?: { id: string; name: string; icon?: string | null; color?: string | null; sortOrder?: number | null }[] }).sections ?? [];
-    const rawTasks = (t.body as { tasks?: unknown }).tasks ?? [];
+    const rawSections = [...((r.body as { sections?: { id: string; name: string; icon?: string | null; color?: string | null; sortOrder?: number | null }[] }).sections ?? [])];
+    const rawTasks = (r.body as { tasks?: unknown }).tasks ?? [];
     if (!Array.isArray(rawTasks) || !rawTasks.every(isTaskBody)) throw new Error('The server returned an invalid task list.');
     // Each section carries its own tasks, so the view never filters per row.
     type TaskRow = Result<'loadTasks'>['tasks'][number];
@@ -1051,9 +1093,15 @@ const sources: Sources = {
     liveTickets.delete(attempt);
     if (!ticket) throw new Error('connect again to request a fresh ticket');
     // Opened with no await before the fetch: the stream must start in this turn.
+    liveOpen = false;
+    forgetAnswers();
     return fetch(`${kept(store) ? kept(store).replace(/^http/, 'ws') : SOCKET}/live?ticket=${encodeURIComponent(ticket)}`, {
       exactIdleTimeout: 120000,
       exactStream(event: StreamEvent) {
+        // A message says something changed, so what was kept is old; a socket that is not open says nothing, so nothing is kept.
+        if (event.type === 'message' || event.type === 'open') liveOpen = true;
+        else liveOpen = false;
+        forgetAnswers();
         if (event.type === 'message') liveTicks += 1;
         return { status: event.type === 'message' ? 'open' : event.type, ticks: liveTicks, text: event.type === 'message' ? String(event.data) : '' };
       },

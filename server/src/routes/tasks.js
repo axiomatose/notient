@@ -149,6 +149,36 @@ export function createTasksRouter({ repos, requireAuth, liveHub = null, notifica
     }
   });
 
+  // Everything a board or list screen shows, in one round trip: the list's sections, top-level tasks,
+  // every subtask of those tasks, and the people on the list. Same access as the four reads it combines.
+  router.get("/board", (req, res, next) => {
+    try {
+      const { listId } = z.object({ listId: z.string().trim().min(1) }).parse(req.query ?? {});
+      const { userId: me } = req.auth;
+      const shared = access.forList(listId, me);
+      if (!shared) {
+        throw new HttpError(404, "Task list not found", "task_list_not_found");
+      }
+      const userId = access.readAs(shared, me);
+      const tasks = repos.tasks.list({ userId, listId });
+      const subtasks = tasks
+        .filter((task) => (task.subtaskCount ?? 0) > 0)
+        .flatMap((task) => repos.tasks.list({ userId, parentId: task.id }));
+      res.json({
+        sections: repos.taskSections.list({ userId, listId }),
+        tasks,
+        subtasks,
+        members: access.members(listId),
+      });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        next(new HttpError(400, "Invalid query parameters", "invalid_query"));
+        return;
+      }
+      next(error);
+    }
+  });
+
   router.post("/", (req, res, next) => {
     (async () => {
       const { deviceId } = req.auth;

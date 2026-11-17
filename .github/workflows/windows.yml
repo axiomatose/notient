@@ -1,0 +1,68 @@
+# Builds the Windows app with Exact and uploads it as a downloadable artifact. Manual only: Actions tab > "Windows app" > Run workflow.
+# Windows support in Exact is early, so a failing run here is expected news about Exact, not about Notient.
+name: Windows app
+
+on:
+  workflow_dispatch:
+    inputs:
+      exact_repo:
+        description: Where to fetch Exact from
+        default: expo/exact
+      exact_ref:
+        description: Exact branch, tag or commit
+        default: main
+      server:
+        description: Address the app starts on (people can change it on the sign-in screen)
+        default: https://notient-placeholder.invalid
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: notient
+
+      - name: Check out Exact
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.exact_repo }}
+          ref: ${{ inputs.exact_ref }}
+          path: exact
+          token: ${{ secrets.EXACT_TOKEN || github.token }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # Exact pins its Rust toolchain in exact/rust-toolchain.toml; rustup reads it on first use.
+      - name: Install Rust
+        shell: bash
+        working-directory: exact
+        run: |
+          rustup show
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Build the app
+        shell: bash
+        working-directory: notient/app
+        env:
+          API_BASE_URL: ${{ inputs.server }}
+          SOCKET_URL: ${{ startsWith(inputs.server, 'https') && 'wss' || 'ws' }}://${{ replace(replace(inputs.server, 'https://', ''), 'http://', '') }}
+        run: bun ../../exact/scripts/exact.mjs windows --release
+
+      - name: Collect the build
+        shell: bash
+        run: |
+          mkdir out
+          find notient/app/target -iname '*.exe' -path '*release*' -not -path '*/deps/*' -not -path '*/build/*' -exec cp {} out/ \;
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notient-windows
+          path: out/
+          if-no-files-found: error

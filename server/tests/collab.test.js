@@ -199,6 +199,44 @@ describe("assigning people to tasks", () => {
   });
   afterEach(() => context.cleanup());
 
+  it("serves a board in one request: sections, tasks, subtasks and members", async () => {
+    const owner = await signUp("owner", "Olive");
+    const friend = await signUp("friend", "Fern");
+    const stranger = await signUp("stranger");
+    const list = (await agent.post("/task-lists").set(owner.auth).send({ name: "Board" })).body.list;
+    const section = (await agent.post("/task-sections").set(owner.auth).send({ listId: list.id, name: "Doing" })).body.section;
+    const parent = (await agent.post("/tasks").set(owner.auth).send({ listId: list.id, sectionId: section.id, title: "Parent" })).body.task;
+    await agent.post("/tasks").set(owner.auth).send({ listId: list.id, title: "Alone" });
+    await agent.post("/tasks").set(owner.auth).send({ listId: list.id, parentId: parent.id, title: "Child A" });
+    await agent.post("/tasks").set(owner.auth).send({ listId: list.id, parentId: parent.id, title: "Child B" });
+    await agent
+      .post("/task-list-shares")
+      .set(owner.auth)
+      .send({ listId: list.id, sharedWithUserEmail: friend.email, permission: "view" });
+
+    const board = await agent.get(`/tasks/board?listId=${list.id}`).set(owner.auth);
+    expect(board.status).toBe(200);
+    expect(Object.keys(board.body).sort()).toEqual(["members", "sections", "subtasks", "tasks"]);
+    // Each part is what its own route returns.
+    const own = (path) => agent.get(path).set(owner.auth);
+    expect(board.body.tasks).toEqual((await own(`/tasks?listId=${list.id}`)).body.tasks);
+    expect(board.body.sections).toEqual((await own(`/task-sections?listId=${list.id}`)).body.sections);
+    expect(board.body.members).toEqual((await own(`/task-list-shares/members/${list.id}`)).body.members);
+    expect(board.body.tasks.map((t) => t.title).sort()).toEqual(["Alone", "Parent"]);
+    expect(board.body.subtasks.map((t) => t.title).sort()).toEqual(["Child A", "Child B"]);
+    expect(board.body.subtasks.every((t) => t.parentId === parent.id)).toBe(true);
+    expect(board.body.sections.map((s) => s.name)).toEqual(["Doing"]);
+
+    // A viewer reads the owner's board; a stranger is refused; a missing list id is a bad query.
+    const viewed = await agent.get(`/tasks/board?listId=${list.id}`).set(friend.auth);
+    expect(viewed.status).toBe(200);
+    expect(viewed.body.tasks.map((t) => t.title).sort()).toEqual(["Alone", "Parent"]);
+    expect(viewed.body.subtasks).toHaveLength(2);
+    expect((await agent.get(`/tasks/board?listId=${list.id}`).set(stranger.auth)).status).toBe(404);
+    expect((await agent.get("/tasks/board").set(owner.auth)).status).toBe(400);
+    expect((await agent.get(`/tasks/board?listId=${list.id}`)).status).toBe(401);
+  });
+
   it("lists the people on a list and assigns only them", async () => {
     const owner = await signUp("owner", "Olive");
     const friend = await signUp("friend", "Fern");
