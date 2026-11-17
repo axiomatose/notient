@@ -51,8 +51,9 @@ jobs:
         working-directory: notient/app
         env:
           API_BASE_URL: ${{ inputs.server }}
-          SOCKET_URL: ${{ startsWith(inputs.server, 'https') && 'wss' || 'ws' }}://${{ replace(replace(inputs.server, 'https://', ''), 'http://', '') }}
-        run: bun ../../exact/scripts/exact.mjs windows --release
+        run: |
+          export SOCKET_URL="${API_BASE_URL/http/ws}"
+          bun ../../exact/scripts/exact.mjs windows --release
 
       - name: Collect the build
         shell: bash
