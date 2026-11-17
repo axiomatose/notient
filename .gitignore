@@ -1,0 +1,92 @@
+# Node.js
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+.env.backup
+
+# Build artifacts
+dist/
+dist-ssr/
+build/
+coverage/
+*.local
+
+# Logs
+logs/
+*.log
+*.log.*
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Docker (docker-compose-example.yml is the tracked template)
+docker-compose.override.yml
+docker-compose.yml
+
+# IDE/Editor
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# System files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local development
+*.local
+*.swp
+*.swo
+.notient-secrets.json
+
+# Runtime data: the server's database, notes (Markdown files), uploads and keys.
+# The app's dev server keeps them in app/; a deployment keeps them in DATA_DIR (default server/data).
+/app/notes/
+/app/uploads/
+/app/data.db*
+/server/data/
+/data/
+.notient-secrets.json
+
+# Credentials and signing material, wherever they are
+credentials*.json
+*credentials.json
+*.pem
+*.key
+*.p8
+*.p12
+*.cer
+*.mobileprovision
+*.keystore
+*.jks
+secrets.env
+service-account*.json
+
+# AI assistant instructions (local only)
+CLAUDE.md
+.claude/
+.agent/

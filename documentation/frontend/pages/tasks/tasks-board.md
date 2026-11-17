@@ -1,0 +1,120 @@
+# Tasks UX: Header Actions, Quick Add, Kanban, Drag & Drop (exact app)
+
+**Status:** ✅ Phases 1-8 | Tighten tasks screens like notes; add kanban view, reordering, Reminders-style details
+
+## Overview
+`app/app.contract` screens `e.name == "tasks"` (lists overview) and `e.name == "taskList"` (one list). Inline draft rows move into header actions + floating add buttons; list gains a kanban view; sections and tasks reorder by drag.
+
+## Design
+### Lists overview (`tasks`)
+- Header toolbar: `New list` (testId `new-list-button`) and `New folder` (`new-folder-button`) icon buttons. New list → modal route `/new-list` (`EditListSheet creating=true`: name, folder, icon + color picker; testIds `edit-list-name`/`edit-list-save`; `createList(name, folderId, icon, color)`). New folder → popover (`folder-draft`/`add-folder`, `folder-error`).
+- Remove the two inline draft rows from the list.
+- Floating add-task button bottom-right (`fab-add-task`) → modal "New Reminder" route `newTask` (Phase 7).
+
+### One list (`taskList`)
+- Remove inline `task-draft` row and `section-draft` row.
+- Floating `+` bottom-right (`fab-add-task`) → inline quick-add field (`quick-task-title`, submit adds, stays open for the next) into Uncategorized.
+- Each section (incl. Uncategorized) ends with an "Add task" row (`section-add-<sectionId|none>`) → inline field adds a simple task to that section.
+- Header: ellipsis menu (`list-menu`) with: Add section (`menu-add-section` closes the menu and pushes modal route `/new-section`: `NewSectionSheet` name `section-draft`, icon + color picker, `add-section`; `createSection(listId, name, icon, color)`), List/Board toggle (`menu-view-toggle`), Share (`list-share`), Edit (`list-edit`). Remove standalone share/edit buttons.
+- View mode `listView` is derived per list: ids shown as boards are kept in the store key `boards` (space-separated; `secret.keep boards`, pref `Prefs.boards`, action `toggleListView` → `saveBoards`), so each list keeps its view across launches (local to the device).
+
+### Kanban (`listView == "board"`)
+- Horizontal scroller of columns: Uncategorized, then each section in order. Column = header (name, count) + vertical `list virtualized=true` of task cards + "Add task" row.
+- Done tasks: collapsed per column at bottom (or hidden behind a "Done (n)" toggle).
+- Column width responsive: `width="clamp(15rem, 22vw, 22rem)"` + `flex-shrink=0` — columns grow to 22rem on wide windows, keep 15rem on narrow (board scrolls horizontally).
+- Subtasks inline per card (beneath the title, board view only, when `boardSubtasks.listId == openList`): `resource boardSubtasks = loadBoardSubtasks(openList)` (`shape BoardSubtasks {owner, listId, tasks}`; `app.ts` fetches `/tasks?parentId=` in parallel for each task with `subtaskCount > 0`; `Task.parentId` filled in `taskRecord`); row = checkbox `board-subtask-<id>` (`change=toggleTask(id)`) + title; refreshed by the task mutations that refresh `tasks` (plus `subtaskAdded`/`subtaskDone`/`subtaskRenamed`).
+
+### Drag & drop
+- exact: `reorderdrop` on vertical `list virtualized=true` → action(key: string, before: option<string>, e: ReorderEvent{from, to}) — `from`/`to` are list ids; works across lists (kanban columns).
+- Tasks: board drops (`reorderdrop=dropTask`, `reorderGroup="board"`) set `sectionId` + `sortOrder` via `PATCH /tasks/:id`; `sortOrder` = midpoint of neighbours, renumbered by 1024 when they tie. List view tasks are draggable too (Phase 5: per-section virtualized lists).
+- Sections: menu `Reorder sections` → in place: the list area becomes a short draggable list of the sections (state `reorderingSections`, Uncategorized fixed on top, `section-reorder`, `Done` = `section-reorder-done`; `reorderdrop=dropSection`); persists `sortOrder` via `PATCH /task-sections/:id` (midpoint, same renumber rule). Up/Down buttons removed.
+
+## Phases
+| # | Scope | Status |
+|---|---|---|
+| 1 | Lists overview: header New list/New folder popovers, FAB quick-add sheet | ✅ `app.contract` tasks screen; inline draft rows removed; FAB (`fab-add-task`) → `quick-add-pop`; quick add defaults to first list (App does not track last-opened list) |
+| 2 | List screen: remove drafts, FAB + per-section quick add, ellipsis menu (add section, view toggle, share, edit) | ✅ `app.contract` taskList: `list-fab-add-task` → `list-quick-title` bar (state `listQuickOpen`/`listQuickDraft`, action `addListQuickTask`, mutation `listQuickAdded`, submit keeps open + focus); per section `section-add-none` / `section-add-<sectionId>` → `section-add-input` (state `sectionAdding` "" closed, "none" = Uncategorized; `sectionTaskDraft`, `addSectionTask`, `sectionTaskAdded`); menu `list-menu` → `list-menu-pop`: `menu-add-section` (inline `section-draft`/`add-section`, state `sectionMenuOpen`), `menu-view-toggle` (state `listView` "list"/"board", board branch = Phase 3 comment, renders list for now), `list-share`, `list-edit`; old `task-draft`/`task-section`/`add-task` removed |
+| 3 | Kanban board view | ✅ `app.contract` taskList: `if listView == "board"` branch (else `list`); `scroll testId=board` → `row` of `for col in boardIds` columns (`board-col-<none\|sectionId>`, width 17rem, header `boardName` + count `board-count-<id>`); helpers `boardIds` derive, `boardName`/`boardTasks` fns; each column = `list id=board-list-<id> appearance=none virtualized=true flex=1 min-height=0` (virtualized, compiles clean) of cards (`board-task-<id>` checkbox, `board-title-<id>` → `openTaskDetail`); bottom `board-add-<id>` → `section-add-input` (`sectionAdding`); done tasks omitted; test "the board shows sections as columns" |
+| 4 | Drag & drop: board cards (within/across columns) + section reorder | ✅ `app.contract`: board list `reorderGroup="board" reorderdrop=dropTask`, grip `board-grip-<id>` (`reorderFor`); action `dropTask(key, before, e: ReorderEvent)` → `taskDropped` (queue; refreshes tasks, sections) → `placeTask(listId, taskId, sectionId, before)`; list menu `menu-reorder-sections` (`openSectionOrder`) → in-place mode `section-reorder` with `list id=section-order virtualized reorderdrop=dropSection` (rows `order-<id>`, grips `order-grip-<id>`) → `sectionMoved` → `placeSection(listId, id, before)`; Up/Down buttons removed. `app.ts`: `placeRow` helper (midpoint of neighbours, else renumber by 1024), `placeTask`, `placeSection`; `moveSection` removed; `loadSections` reads camel `sortOrder` (was `sort_order`, always 0). API: 1 GET + 1 PATCH per drop (+ PATCH per row only on renumber). Tests: "a board card dragged into another column joins that section", "sections are reordered from the list menu by dragging their handles" (`tap … drag dx dy`) |
+| 5 | List polish: rename sections, blur-cancel adds, plain list, list-view drag | ✅ `app.contract` taskList: list branch = `scroll id=content-<id>` → per `boardIds` col: header `section-<col>` (name `section-name-<id>` → `submitSectionRename`/`cancelSectionRename`; input `section-rename-input`; error `section-rename-error`; Uncategorized static `uncategorized-header`), virtualized `list id=tasklist-<col> reorderGroup="tasks" reorderdrop=dropTask appearance="none" height=rowsHeight(n)` of 56px rows (grip `list-grip-<id>`, `reorderFor`), done rows (`task-<id>`) captioned "Done", add `section-add-<col>` = invisible 44px button (`appearance="none"`, aria "Add task"); board header rename `board-col-name-<id>`; state `sectionRenaming`/`sectionRenameDraft`; actions `openSectionRename`, `editSectionRename`, `submitSectionRename`, `afterSectionRename`, `cancelSectionRename`, `cancelSectionAdd` (blur on `section-add-input`), `openListQuick`/`cancelListQuick` (blur on `list-quick-title`; FAB opens only); mutation `sectionRenamed` (refreshes sections, tasks); `app.ts` `renameSection(listId, sectionId, name)` → PATCH `/task-sections/:id {name}`; `boardSection` parses `tasklist-` or `board-list-` ids; tests: section rename, blur cancel (add + quick bar), list-row drag into a section |
+| 6 | Rich tasks (Reminders parity): detail rows for date/time (all-day toggle), URL, repeat, reminder, flag, priority, tags, list/section pickers, subtasks, images; server recurrence advance on check-off; row/card metadata | ✅ `app.contract` `TaskEditor` (grouped switch/picker rows, `task-*` testIds, one PATCH on Save) and `TaskLabel` (shared by list rows and board cards: bangs, flag, notes line, due/repeat/subtasks/tags); `app.ts` `taskRecord`, `updateTask`; server migrations 19-21 (`flagged`, `recurrence`, `url`), `lib/recurrence.js`, PATCH advance; tests: "a task's details: flag, url, repeat and time are saved", "a repeating task advances its due date when checked off"; server `api.test.js` + `recurrence.test.js` |
+| 7 | Lists-screen FAB opens the full task editor as a "New Reminder" modal (route `newTask`, `navigationPresentation="modal"`); `TaskEditor` `creating=true`: Cancel `new-task-cancel`, Add `new-task-add` (disabled while title blank), Subtasks/Images/Position/Delete hidden; list default = first list (`newTaskListId`), sections via `sectionsListId`; save = `createNewTask` → `createTaskFull` (one POST /tasks with all fields, `dueBody` shared with `updateTask`) → `newTaskAdded` → `afterNewTaskAdd` pops. Quick-add panel `quick-add-pop` and its state/actions/mutation removed. One-list FAB unchanged. Test "a new reminder from the lists screen saves a flagged, prioritized task" |
+| 8 | Icons & colors: lists and sections take a lucide icon + one of 15 colors | ✅ `app.contract`: `LucideIcon` (svg paths, stroke 2), `IconColorPicker` (`icon-color-picker`: `pick-icon-<name>` 20 bundled, `icon-name-input` → `icon-hit-<name>` chips, `pick-color-<hex no #>`, `pick-none`); helpers `bundledIcons`/`iconPathsOf`/`colorPalette`/`tintOf`/`sectionOf`/`listOf`; `EditListSheet` picker (state `icon`/`color`, `saveListNow(…, icon, color)`); overview rows + one-list header show icon in list color; section headers `section-style-<id>` / board `board-col-style-<id>` → popover `section-style-pop` (state `styleSectionId`, actions `openSectionStyle`, `pickSectionIcon`, `pickSectionColor`, `clearSectionStyle`; mutation `sectionStyled` PATCH); board column tinted `color+"1f"`. Root resources: `iconHits` = `lucideSearch(iconQuery)`, `fetchedIcons` = `lucideIcon(n) for n in iconNames` (names not in the bundle; `iconProbe` adds a picked name). `app.ts`: `lucideIcon` (cached per name; failure = no paths, uncached), `lucideSearch` (empty q = no call), `updateSection(listId, id, icon, color)`, `updateList` sends icon/color. Tests: "a list gets an icon and color", "a section gets a color" |
+
+## Fixed Issues
+- Task editor notes field widened the sheet on a long unbroken line: notes row + `task-notes` textarea (also `event-notes`) pin `width="100%" max-width="100%" min-width=0` and `white-space="pre-wrap" overflow-wrap="anywhere"`, so `field-sizing="content"` grows height only. A grouped-list `section` takes no width layout of its own (compile rejects `min-width` on it), so the fix sits on the row/textarea.
+- Blue focus line on the notes/body markup textareas: `outline="none"` on `task-notes`, `event-notes`, `note-body` — the documented switch that removes the platform's focus ring on every host (web + Mac).
+- List view Uncategorized rows: chevron was a sibling of the row (rendered huge); now inside the row.
+- FABs: icon 26px, centered (flex), shadow; board row has 88px bottom padding so the FAB clears column "Add task" rows.
+- Verified iOS 27.2 simulator: touch drag on a board card's grip moves it across columns (auto-scrolls board), persisted `sectionId` + `sortOrder`.
+
+- List view row height by content (`fn rowHeight`: 44px + 18px for notes line + 18px for meta line; `rowsHeight(tasks)` = sum, empty section = 36px drop zone); was fixed 76px.
+
+- Lists-screen FAB used an in-flow quick-add panel (`quick-add-pop`) before Phase 7 (a popover drifted off-screen under the iOS keyboard pan); replaced by the New Reminder modal.
+
+## Related: [tasks.md](tasks.md), [../notes/rich-text.md](../notes/rich-text.md)
+
+
+## Uncategorized name
+- Per list: `task_lists.uncategorized_name` (migration 31; PATCH `/task-lists/:id {uncategorizedName}`, "" restores default). App: `TaskList.uncategorizedName`, derive `noneName`, `renameUncategorized(listId, name)`, mutation `noneRenamed`. The `none` column header is tappable like other sections (`section-name-none`/`board-col-name-none`, heading testId `uncategorized-header`); no icon/color for it.
+
+## Drag without handles
+- No grip icons: the whole row/card carries `reorderFor` (list rows `list-grip-<id>`, board cards `board-grip-<id>`, section order rows `order-grip-<id>`; aria "Hold and drag X to reorder"). No `touch-action="none"`, so on iOS the drag starts on a long press and a plain swipe still scrolls (ExactDrag `ReorderIOS`). Taps on the checkbox/title still work.
+
+## Grocery list
+- `task_lists.grocery_mode` (migration 32; POST/PATCH `/task-lists` `groceryMode`); app `TaskList.grocery`, toggle `edit-list-grocery` in the New/Edit list sheet (`createList`/`updateList` take a 5th/6th `grocery` arg).
+- Grocery list: checked items vanish (list view's "done" rows hidden); list menu `menu-show-completed` ("Show completed"/"Hide completed", state `showCompleted`, session only) reveals them. Board view never shows done cards.
+- Code blocks in view mode: a coloured container (`view-code-box-<i>`) with an invisible full-size overlay button (`view-code-copy-<i>`, over text with `pointer-events="none"`, so the text view cannot swallow the tap) that copies; root `copyBlock`/`codeCopied` flashes it green with a spring check mark for 1.1s (`task copiedFlash`).
+- Inline code is a tap-to-copy chip like a code block (same colours, spring flash): a line that is one `code` span is its own block (`isTickLine`, `tickText`, kind `code`, no syntax colouring, so each token copies alone); a line mixing text and `code` spans is kind `inline` (`isInlineLine`, `inlineSpans`: wrapping row of text and chip buttons `view-code-copy-<line>-<span>`; bold/links in such a line draw plain).
+- Row titles (notes list, task rows) use `font-weight=600`.
+
+## Apple Intelligence (iOS 26+)
+- Hatch `ai` (`app/modules/apple/AiHatch.swift`; app.json `hatches.ai`, data word `request`): hidden input `ai-bridge` in the task list screen. Contract state `aiStatus` ("" = not native/unreported, `ok`, `old`, `ineligible`, `notenabled`, `notready`), `aiBusy`, `aiNotice`.
+- Protocol: hatch → `ai:ready:<status>` on mount; contract sets `data-request` = `<n>\n<id>\t<title>...`; hatch → `ai:sorted:<n>:<Department|id id;Department|id id>` (departments in walking order: Produce, Bakery, Deli, Meat & Seafood, Dairy & Eggs, Frozen, Pantry, Snacks, Beverages, Household, Personal Care, Other) or `ai:error:<n>:<why>`. Model: FoundationModels `LanguageModelSession.respond(to:)` (plain text, no macros), prompt = supermarket aisle order, numbers parsed and de-duplicated, dropped ones appended.
+- Sparkles button `list-ai` (grocery lists, native only) → `sortByAisle`; `aiStatus != ok` opens dialog `ai-unavailable` (iOS 26+ / supported device message). Result applied by `sortTasks(listId, spec)`: each department is a section (same-name section reused, else created), its open tasks move there with `sortOrder` by position, and the department sections are ordered after the existing ones in walking order; mutation `tasksSorted`.
+- Grocery items open a simple `TaskEditor` (`derive simple` = the selected list is grocery): title, notes, list/section, images only.
+- Drag fix: a `press` node under a `reorderFor` row stops the long press, and since the exact update of 2026-11-15 a `link` with an in-app `href` lifts the host's own link menu on long press, which also beats the reorder lift. So the row's title is plain (long-press anywhere drags) and a trailing chevron button (`task-open-<id>`, 44pt) opens the task.
+
+## Collapsing sections
+- List view: chevron `section-fold-<col>` in a section header (shown once the section has more than one open task, or while folded) folds the section's rows, done rows and add row away (`foldedCols`, space separated ids, session only; `folded()`, `toggleFold`). Board view is unaffected.
+
+## Root headers (Notes / Tasks / Calendar)
+- The `header` carries `display="flex" align-items="center" gap=8 padding="8px 16px"` and the heading `flex=1 min-width=0`: iOS ignores them (still the glass bar) but the web draws a row (without them a bare header stacked its children vertically). The calendar heading is `font-size` 22 so "January 2026" fits beside the buttons on a phone-width web page; iOS shows it smaller than the Notes/Tasks large titles.
+- Each root screen uses a real `header` (large `aria-level=1` heading: "Notes", "Tasks", the calendar's period label `period-label`) so iOS draws glass bar items: avatar button (`persona`, `persona-tasks`, `persona-calendar`; `symbol:person`, hidden when `wide`, opens `persona-menu`) leading, adjacent icon buttons trailing grouped into one glass pill. Calendar: `prev-period`, `today-button` (calendar glyph; a per-day "N.calendar" symbol computed at runtime did not render), `next-period`, `cal-menu` (ellipsis; holds the Day/Week/Month radios `cal-mode-<m>` and calendar options). A named expression in an `image` (e.g. photo-or-symbol) did not render in the bar; the avatar photo/icon shows only in the menu/Settings.
+
+## Quick add keeps going
+- List quick-add (`list-quick-title`): Return or the software keyboard's checkmark adds the task, empties the field and keeps the box and keyboard for the next item. The key resigns the field after `submit`, so `listQuickSubmitting` makes that blur not a cancel, and `afterListQuickAdd` bumps `listQuickGen`, which rebuilds the field (`for g in [listQuickGen] key=q<g>`) so its `autofocus` takes the keyboard back (`focus()` on the old field did not).
+
+## List view mode is kept on the server
+- `task_lists.view_mode` (migration 33; `"list"`/`"board"`/null) via `PATCH /task-lists/:id {viewMode}`; `TaskList.viewMode`; source `setListView` (`boardsSaved` refreshes `lists`). It replaces the per-device `prefs.boards` choice, so every device shows a list the same way.
+- Lists a device still holds as boards in `prefs.boards` with no server view are pushed up once, one per update (`legacyBoards`, task `migrateBoard`); until then `listView` falls back to the local value.
+
+## Apple Intelligence on the Mac
+The `ai` hatch also builds for macOS 26+ (`app.json` hatches `ai: ["ios","macos"]`; `AiHatch.swift` is `#if os(iOS) || os(macOS)`, `Hatches.swift` has a Mac module with only the `ai` hatch). Same status words and `list-ai` button; "old" means below iOS 26 / macOS 26.
+
+## Task view/edit is a sheet
+`TaskEditor` is a modal route (`navigationPresentation="modal"`) for creating and for editing, with a Cancel button (`id="back"`, testId `new-task-cancel` creating / `task-cancel` editing). The host sizes the sheet (a centred ~35rem sheet on wide web, a bottom sheet on phones).
+
+## Subtasks: delete + rename in place; Position removed
+- Task editor's "Position" section (Move Up/Down) is gone: drag & drop reorders; root actions `moveTaskUp`/`moveTaskDown`, mutation `taskMoved` and `app.ts` `moveTask` deleted.
+- Each subtask row (open and done) has a delete button (`subtask-delete-<id>`, aria "Delete <title>") → root `deleteSubtask(id)` → `deleteTask` on `taskDeleted` (now refreshes `tasks, subtasks, recentTasks`, so board subtask counts update).
+- Tapping a subtask's title (`subtask-title-<id>`) edits in place: input `subtask-edit-<id>` (state `editingSub`/`subEditDraft`; Enter or blur commits via root `renameSubtask` → `updateTask` PATCH, blank/unchanged just cancels; no Escape event on exact inputs). Mutation `subtaskRenamed` refreshes tasks, subtasks, recentTasks. Test: "a task carries notes, a due date, priority, tags and subtasks".
+
+## Done section = finished (2026-11)
+- A section named "Done" (case-insensitive; `doneSectionId`) is the list's done column. Dragging a card into it finishes the task (`placeTask` flag `done` → `isDone:true`); dragging it out reopens it (`open`). Finishing a task from anywhere (`toggleTask` → `setTaskDoneIn`) moves it into Done; unchecking one that sits in Done puts it back in Uncategorized.
+- The board's Done column shows the finished tasks (`colTasks(…, doneSectionId)`: its history); other columns show open tasks. Board cards have no checkbox (finishing is moving to Done); subtasks keep theirs.
+- Task sheet: the editing sheet's key is the task id (not id+version), so a save or assignee change no longer rebuilds (flashes) it; Save saves and closes (`saveTaskClose`/`afterTaskSaved`); Escape closes it (host); tapping outside the sheet does not (exact has no backdrop dismissal).
+- Done column order: `tasks.completed_at` (migration 35; set as a task becomes done, kept through edits, cleared on reopen; `Task.completedAt`) sorts the Done column newest-finished first (`colTasks`); a search field `done-search` in that column's header filters it by title (state `doneQuery`; the header count is unfiltered).
+
+## Task drawer (wide windows)
+- On a wide window (`wide`, ≥900 px) opening a task shows its editor as a bottom drawer over the list or board (like vance-fleet-mac's work-order drawer): a panel at the bottom of the `taskList` route column (`testId=drawer`, centred, `min(80rem, 100% − 2rem)` wide, `min(80%, 60rem)` high, grabber `drawer-grabber`), the page above it still usable. State `drawerTask` (task id) replaces the `taskDetail` route there (`openTaskDetail`, `openRecentTask`); `closeDrawer` / Cancel / grabber / `Back` / delete / a successful Save clear it. Narrow windows and iOS keep the modal `taskDetail` sheet; the new-task sheet is still a modal route.
+- `TaskEditor` has no root frame: its view is `header` + `list` + file input (a multi-root component), so the call sites supply the frame: a modal route column (`taskDetail`, `newTask`) or the drawer panel. (A frame component holding both a route column and a drawer is refused: a `navigationKey` column inside another route.)
+- Not yet a drawer: settings, new event, list/section/calendar sheets.
+- Two columns: `TaskEditor` prop `drawer` makes `cols = ["left","right"]`, two `list`s side by side (`task-edit-left`: title/notes, URL, date, flag/priority/tags, assignee/list/section; `task-edit-right`: subtasks, images, then errors and delete); the sheet has one list (`task-edit`, `cols = ["all"]`). Each section is written once, guarded by `col != "right"` / `col != "left"`. Notes are shorter in the drawer (`min-height 5rem`). In an 800 px-high window the right column scrolls slightly; from about 900 px up nothing scrolls.
+- Mac window: `app.json` `host.macos.window` has `minWidth: 900` / `minHeight: 560` (opens 1100×760), so the window can't drop below the `wide` threshold and swap the sidebar shell for the phone tab-bar shell. Browsers can't be constrained: a narrower web window still gets the phone shell by design.
+
+## Image lightbox
+- Tapping an attached image opens it full size: root `dialog id="lightbox"` (own black `background-color` so it is a top-layer panel, `closedby="any"`: tap outside or Escape closes; button `lightbox-close`), state `lightboxUrl`, action `openLightbox(url)` (`showModal`). Wired to the task sheet's attachments (`task-image-view-<id>`, prop `zoom` on `TaskEditor`) and to unlinked images in note view (`view-image-zoom-<block>`, prop `zoom` on `NoteBlocks`/`NoteEditor`). Linked images (`[![alt](src)](href)`) still open their link.
+
+## Kanban cards on narrow windows
+- Wide windows: the whole card is the drag handle (hold to lift). Narrow windows: the card has a grip on its left (`board-grip-<id>`, `touch-action="none"`, label "Hold and drag <task> to reorder") and the rest of the card scrolls the board, so a touch no longer lifts a card before the scroll starts. Card content is the component `BoardCardBody` (title/marks, subtasks with checkboxes, open button).

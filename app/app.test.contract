@@ -1,0 +1,2615 @@
+// The app talks to the repo's Express API; `test` and `verify` start server.ts
+// on an empty database for the whole run, so the tests share it in order.
+// Each test starts from empty storage (signed out), so it signs up its own
+// account; rows carry server-made ids, so they are driven by their text.
+test "sign up straight into the notes list"
+  expect tree has "email"
+  type "email" "alex@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Alex"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state shown == "Alex"
+  expect tree has "empty-add-note"
+
+test "a note is written, opened, edited, filed, tagged, trashed and restored"
+  type "email" "blake@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Blake"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Grocery plan"
+  type "note-body" "Buy oats and milk"
+  tap "note-save"
+  clock data
+  clock settle
+  expect state lib.notes.0 .title == "Grocery plan"
+  tap "Grocery plan"
+  clock data
+  clock settle
+  expect text "note-title-display" == "Grocery plan"
+  expect state editorBody == "Buy oats and milk"
+  tap "note-title-display"
+  clock settle
+  type "note-title" "Grocery plan v2"
+  tap "note-title-done"
+  clock settle
+  tap "note-folder-button"
+  clock settle
+  type "note-folder" "Lists"
+  tap "note-tags-button"
+  clock settle
+  type "note-tags" "shopping, weekly"
+  tap "note-pin"
+  tap "note-edit"
+  clock settle
+  tap "note-save"
+  clock data
+  clock settle
+  expect state lib.notes.0 .title == "Grocery plan v2"
+  expect state lib.notes.0 .folder == "Lists"
+  expect state lib.notes.0 .isPinned == true
+  expect state lib.notes.0 .tags.0 == "shopping"
+  expect state lib.notes.0 .tags.1 == "weekly"
+  back
+  clock settle
+  tap "tag-button"
+  clock settle
+  tap "tag-shopping"
+  clock settle
+  expect state tagFilter == "shopping"
+  tap "tag-button"
+  clock settle
+  tap "tag-all"
+  clock settle
+  expect state tagFilter == ""
+  tap "notes-search-open"
+  clock settle
+  type "notes-search" "weekly"
+  clock settle
+  expect state notesShown.length == 1
+  type "notes-search" ""
+  clock settle
+  tap "open-trash"
+  clock settle
+  expect text "trash-empty" == "Nothing in the trash."
+  back
+  clock settle
+  tap "Grocery plan v2"
+  clock data
+  clock settle
+  tap "note-trash"
+  clock settle
+  tap "trash-confirm"
+  clock data
+  clock settle
+  expect state lib.notes.0 .deletedAt == 1
+  tap "open-trash"
+  clock settle
+  expect tree missing "trash-empty"
+  tap "Restore"
+  clock data
+  clock settle
+  expect state lib.notes.0 .deletedAt == 0
+  back
+  clock settle
+  tap "Grocery plan v2"
+  clock data
+  clock settle
+  tap "note-trash"
+  clock settle
+  tap "trash-confirm"
+  clock data
+  clock settle
+  tap "open-trash"
+  clock settle
+  tap "Delete Grocery plan v2 forever"
+  clock settle
+  tap "forever-confirm"
+  clock data
+  clock settle
+  expect state lib.notes == []
+
+test "the editor's popovers suggest recent folders and popular tags"
+  type "email" "suggest@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sg"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "First note"
+  type "note-body" "one"
+  tap "note-folder-button"
+  clock settle
+  type "note-folder" "Projects"
+  tap "note-tags-button"
+  clock settle
+  type "note-tags" "work, urgent"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Second note"
+  tap "note-folder-button"
+  clock settle
+  expect tree has "folder-suggest-0"
+  expect text "folder-suggest-0" == "Projects"
+  tap "folder-suggest-0"
+  clock settle
+  expect state editorFolder == "Projects"
+  tap "note-tags-button"
+  clock settle
+  expect tree has "tag-suggest-0"
+  type "note-tags" "w"
+  clock settle
+  expect text "tag-suggest-0" == "work"
+  tap "tag-suggest-0"
+  clock settle
+  expect state editorTagsText == "work, "
+  expect text "tag-suggest-0" == "urgent"
+  tap "note-save"
+  clock data
+  clock settle
+  expect state lib.notes.length == 2
+  expect state lib.folders.0 == "Projects"
+  expect state popularTags.0 == "work"
+
+test "sign out returns to the sign-in screen, sign in returns to the notes"
+  type "email" "casey@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state shown == "casey"
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  expect tree has "email"
+  type "email" "casey@example.com"
+  type "password" "Passw0rd!23"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state shown == "casey"
+
+test "task lists and tasks"
+  type "email" "dev@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Groceries"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .name == "Groceries"
+  tap "Groceries"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Buy oats"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .title == "Buy oats"
+  expect state tasks.tasks.0 .isDone == false
+  tap "Check off Buy oats"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == true
+
+test "a task is quick-added from the list's add button and lands in Uncategorized"
+  type "email" "quick@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Quin"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Desk"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Desk"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Pay bills"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  type "list-quick-title" "File taxes"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 2
+  expect state tasks.tasks.0 .sectionId == ""
+  expect tree has "list-quick-title"
+
+test "a new reminder from the lists screen saves a flagged, prioritized task"
+  type "email" "qa1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Qa One"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Errands"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .name == "Errands"
+  tap "fab-add-task"
+  clock settle
+  type "task-title" "Pick up mail"
+  tap "task-flag"
+  type "task-priority" "3"
+  tap "new-task-add"
+  clock data
+  clock settle
+  tap "Errands"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .title == "Pick up mail"
+  expect state tasks.tasks.0 .flagged == true
+  expect state tasks.tasks.0 .priority == 3
+  tap "Check off Pick up mail"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == true
+
+test "a task carries notes, a due date, priority, tags and subtasks"
+  type "email" "ted@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Home repairs"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Home repairs"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Fix the sink"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Open Fix the sink"
+  clock data
+  clock settle
+  type "task-notes" "# Steps"
+  tap "task-date-toggle"
+  clock settle
+  type "task-due" "2026-11-20"
+  type "task-priority" "3"
+  type "task-tags" "plumbing, weekend"
+  tap "task-save"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .notes == "# Steps"
+  expect state tasks.tasks.0 .priority == 3
+  expect state tasks.tasks.0 .tags.0 == "plumbing"
+  tap "Open Fix the sink"
+  clock data
+  clock settle
+  type "subtask-draft" "Buy parts"
+  tap "add-subtask"
+  clock data
+  clock settle
+  expect state subtasks.tasks.0 .title == "Buy parts"
+  tap "Check off Buy parts"
+  clock data
+  clock settle
+  expect state subtasks.tasks.0 .isDone == true
+  expect tree missing "task-reorder-header"
+  expect tree missing "task-up"
+  expect tree missing "task-down"
+  tap "Buy parts"
+  clock settle
+  type "Rename Buy parts" "Buy gaskets"
+  type "Rename Buy parts" key "Enter"
+  clock data
+  clock settle
+  expect state subtasks.tasks.0 .title == "Buy gaskets"
+  tap "Delete Buy gaskets"
+  clock data
+  clock settle
+  expect state subtasks.tasks == []
+  expect state tasks.tasks.0 .subtaskCount == 0
+  tap "task-delete"
+  clock settle
+  tap "delete-task-confirm"
+  clock data
+  clock settle
+  expect state tasks.tasks == []
+
+test "sections group a list's tasks"
+  type "email" "sam@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Weekend"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Weekend"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Outside"
+  tap "section-add-none"
+  clock settle
+  type "section-add-input" "Mow the lawn"
+  type "section-add-input" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 1
+  back
+  clock settle
+  tap "Weekend"
+
+test "the board shows sections as columns"
+  type "email" "bd1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Yard"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Yard"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Outside"
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Rake leaves"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .title == "Rake leaves"
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  expect tree has "board"
+  expect tree has "board-col-none"
+  expect text "board-count-none" == "1"
+  tap "Rake leaves"
+  clock settle
+  back
+  clock settle
+
+test "a list is renamed, filed and deleted"
+  type "email" "lena@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-folder-button"
+  type "folder-draft" "Home"
+  tap "add-folder"
+  clock data
+  clock settle
+  expect state taskFolders.folders.0 .name == "Home"
+  expect tree has "folder-header-Home"
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Chores"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Chores"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "list-edit"
+  clock settle
+  type "edit-list-name" "Chores v2"
+  type "edit-list-folder" "Home"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .name == "Chores v2"
+  expect tree missing "edit-list-save"
+  tap "list-menu"
+  clock settle
+  tap "list-edit"
+  clock settle
+  tap "edit-list-delete"
+  clock settle
+  tap "delete-list-confirm"
+  clock data
+  clock settle
+  expect state lists.lists == []
+
+test "a shared list reaches the other account's shared with me"
+  type "email" "raul@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "tess@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Team list"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Team list"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "list-share"
+  clock settle
+  type "share-list-email" "raul@example.com"
+  tap "share-list-button"
+  clock data
+  clock settle
+  expect state listShares.shares.length == 1
+  back
+  clock settle
+  tap "tab-notes"
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "raul@example.com"
+  type "password" "Passw0rd!23"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  expect tree has "shared-lists-header"
+  tap "Team list"
+  clock data
+  clock settle
+  expect tree has "list-fab-add-task"
+
+test "an event lands on its day"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "erin@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Dentist"
+  type "event-start-day" "2026-11-16"
+  type "event-start-time" "09:30"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cell-2026-11-16"
+  clock data
+  clock settle
+  expect state activeDay == "2026-11-16"
+  expect state selectedCell.events.0 .title == "Dentist"
+  tap "open-day"
+  clock data
+  clock settle
+  expect state calMode == "day"
+  expect state dayEvents.0 .title == "Dentist"
+
+test "the calendar moves between months and events can be edited and deleted"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "gus@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Review"
+  type "event-start-day" "2026-11-17"
+  tap "new-event-add"
+  clock data
+  clock settle
+  expect state view.periodLabel == "November 2026"
+  tap "prev-period"
+  clock data
+  clock settle
+  expect state view.periodLabel == "October 2026"
+  tap "next-period"
+  clock data
+  clock settle
+  tap "cell-2026-11-17"
+  clock data
+  clock settle
+  expect state selectedCell.events.0 .title == "Review"
+  tap "Review"
+  clock data
+  clock settle
+  type "event-title" "Review v2"
+  type "event-location" "Room 4"
+  tap "event-save"
+  clock data
+  clock settle
+  expect state selectedCell.events.0 .title == "Review v2"
+  expect state selectedCell.events.0 .location == "Room 4"
+  tap "Review v2"
+  clock data
+  clock settle
+  tap "event-delete"
+  clock settle
+  tap "delete-event-confirm"
+  clock data
+  clock settle
+  expect state selectedCell.events == []
+
+test "a calendar can be created and picked for a new event"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "hope@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  tap "menu-new-calendar"
+  clock settle
+  type "cal-draft" "Personal"
+  tap "add-calendar"
+  clock data
+  clock settle
+  expect state calendars.calendars.1 .name == "Personal"
+  expect tree has "calendars-row"
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Solo dinner"
+  type "event-start-day" "2026-11-18"
+  type "event-calendar" "Personal"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cell-2026-11-18"
+  clock data
+  clock settle
+  expect state selectedCell.events.0 .title == "Solo dinner"
+  expect state calendars.calendars.1 .name == "Personal"
+
+test "new calendar from the menu"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "jo@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  expect tree has "menu-manage-calendars"
+  expect tree has "menu-today"
+  tap "menu-new-calendar"
+  clock settle
+  type "cal-draft" "Gym"
+  type "cal-draft" key "Enter"
+  clock data
+  clock settle
+  expect state calendars.calendars.1 .name == "Gym"
+  expect state calDraft == ""
+  expect tree has "fab-add-event"
+
+test "calendars can be recolored and hidden"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "ivy@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  tap "menu-new-calendar"
+  clock settle
+  type "cal-draft" "Work"
+  tap "add-calendar"
+  clock data
+  clock settle
+  expect state calendars.calendars.1 .name == "Work"
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Standup"
+  type "event-start-day" "2026-11-16"
+  type "event-calendar" "Work"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cell-2026-11-16"
+  clock data
+  clock settle
+  expect state selectedCell.events.0 .title == "Standup"
+  tap "cal-menu"
+  clock settle
+  tap "menu-manage-calendars"
+  clock settle
+  tap "Work"
+  clock settle
+  tap "cal-color-ff3b30"
+  tap "cal-save"
+  clock data
+  clock settle
+  expect state calendars.calendars.1 .color == "#FF3B30"
+  tap "Show Work"
+  clock data
+  clock settle
+  expect state calendars.calendars.1 .isActive == false
+  tap "manage-calendars-done"
+  clock settle
+  expect state selectedCell.events == []
+  tap "cal-menu"
+  clock settle
+  tap "menu-manage-calendars"
+  clock settle
+  tap "Show Work"
+  clock data
+  clock settle
+  tap "manage-calendars-done"
+  clock settle
+  expect state selectedCell.events.0 .title == "Standup"
+
+test "tapping a month day shows its agenda"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "kai@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  expect state activeDay == "2026-11-16"
+  expect tree has "no-events"
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Review"
+  type "event-start-day" "2026-11-17"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cell-2026-11-17"
+  clock data
+  clock settle
+  expect state activeDay == "2026-11-17"
+  expect tree has "open-day"
+  expect state selectedCell.events.0 .title == "Review"
+  tap "cell-2026-11-18"
+  clock settle
+  expect tree has "no-events"
+
+test "the week view groups events by day"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "lee@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Lunch"
+  type "event-start-day" "2026-11-16"
+  type "event-start-time" "12:00"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Standup"
+  type "event-start-day" "2026-11-16"
+  type "event-start-time" "09:00"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Holiday"
+  type "event-start-day" "2026-11-16"
+  tap "event-allday"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  tap "cal-mode-week"
+  clock data
+  clock settle
+  expect tree has "week-day-2026-11-16"
+  expect tree has "week-day-2026-11-17"
+  expect state cells.1 .events.0 .title == "Holiday"
+  expect state cells.1 .events.1 .title == "Standup"
+  expect state cells.1 .events.2 .title == "Lunch"
+  expect state cells.2 .events == []
+
+test "the day view positions an event on the timeline"
+  epoch "2026-11-16T08:00:00Z"
+  type "email" "mia@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Dentist"
+  type "event-start-day" "2026-11-16"
+  type "event-start-time" "09:30"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Planning"
+  type "event-start-day" "2026-11-16"
+  type "event-start-time" "09:45"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  tap "cal-mode-day"
+  clock data
+  clock settle
+  expect tree has "day-timeline"
+  expect tree has "now-line"
+  expect state dayTimed.0 .title == "Dentist"
+  expect state dayTimed.0 .startMin == 570
+  expect state dayTimed.0 .endMin == 630
+  expect state dayTimed.0 .lanes == 2
+  expect state dayTimed.0 .lane == 0
+  expect state dayTimed.1 .lane == 1
+
+test "an all-day event with end, repeat, alert and url is saved"
+  epoch "2026-11-16T08:00:00Z"
+  time-zone "UTC"
+  type "email" "nia@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  type "event-title" "Offsite"
+  type "event-location" "Lisbon"
+  tap "event-allday"
+  clock settle
+  expect tree missing "event-start-time"
+  type "event-start-day" "2026-11-18"
+  type "event-end-day" "2026-11-19"
+  type "event-repeat" "weekly"
+  type "event-alert" "1440"
+  type "event-url" "https://example.com/offsite"
+  type "event-attendees" "ana@example.com"
+  tap "new-event-add"
+  clock data
+  clock settle
+  tap "cell-2026-11-18"
+  clock data
+  clock settle
+  expect state selectedCell.events.0 .title == "Offsite"
+  expect state selectedCell.events.0 .allDay == true
+  expect state selectedCell.events.0 .endDay == "2026-11-19"
+  expect state selectedCell.events.0 .recurrence == "FREQ=WEEKLY"
+  expect state selectedCell.events.0 .alertMinutes == 1440
+  expect state selectedCell.events.0 .url == "https://example.com/offsite"
+  expect state selectedCell.events.0 .location == "Lisbon"
+  tap "Offsite"
+  clock data
+  clock settle
+  expect tree missing "event-start-time"
+  expect text "event-end-day" == "2026-11-19"
+  expect text "event-repeat" == "weekly"
+  expect text "event-alert" == "1440"
+  expect text "event-url" == "https://example.com/offsite"
+  tap "event-save"
+  clock data
+  clock settle
+
+test "the new event modal prefills the selected day"
+  epoch "2026-11-16T08:00:00Z"
+  time-zone "UTC"
+  type "email" "omar@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "cell-2026-11-18"
+  clock data
+  clock settle
+  tap "fab-add-event"
+  clock settle
+  expect text "event-start-day" == "2026-11-18"
+  expect text "event-start-time" == "09:00"
+  expect text "event-end-day" == "2026-11-18"
+  expect text "event-end-time" == "10:00"
+  type "event-title" "Lunch with Ana"
+  tap "new-event-add"
+  clock data
+  clock settle
+  expect state activeDay == "2026-11-18"
+  expect state selectedCell.events.0 .title == "Lunch with Ana"
+  expect state selectedCell.events.0 .startMin == 540
+  expect state selectedCell.events.0 .endMin == 600
+
+test "a shareable link opens the note publicly and is revoked"
+  type "email" "link@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Public recipe"
+  type "note-body" "Boil for ten minutes."
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Public recipe"
+  clock data
+  clock settle
+  tap "note-share"
+  clock settle
+  tap "create-link"
+  clock data
+  clock settle
+  expect tree has "share-url"
+  tap "Open"
+  clock data
+  clock settle
+  expect text "public-title" == "Public recipe"
+  expect text "public-body" == "Boil for ten minutes."
+  back
+  clock settle
+  tap "Revoke"
+  clock data
+  clock settle
+  expect state links.links == []
+
+test "a note shared with a person appears under their shared with me"
+  type "email" "bob@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "alice@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Team notes"
+  type "note-body" "Standup is at nine."
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Team notes"
+  clock data
+  clock settle
+  tap "note-share"
+  clock settle
+  type "share-email" "bob@example.com"
+  tap "share-button"
+  clock data
+  clock settle
+  expect state noteSharesRes.shares.length == 1
+  expect state noteSharesRes.shares.0 .email == "bob@example.com"
+  back
+  clock settle
+  back
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "bob@example.com"
+  type "password" "Passw0rd!23"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect tree has "shared-header"
+  tap "Team notes"
+  clock data
+  clock settle
+  expect text "shared-title" == "Team notes"
+  expect text "shared-body" == "Standup is at nine."
+
+test "notes sort by title"
+  type "email" "sort@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Bananas"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Apples"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "sort-button"
+  clock settle
+  tap "sort-title"
+  clock settle
+  clock settle
+  expect state notesShown.0 .title == "Apples"
+  expect state notesShown.1 .title == "Bananas"
+
+test "saved notes survive a lost connection"
+  type "email" "offline@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Offline keeper"
+  type "note-body" "Still here without the server."
+  tap "note-save"
+  clock data
+  clock settle
+  fail fetch "/notes"
+  reload
+  clock settle
+  expect tree has "stale-note"
+  expect state lib.notes.0 .title == "Offline keeper"
+  pass fetch "/notes"
+
+test "a task in a note checks off from view mode and stays checked"
+  type "email" "rt1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Rita"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Checklist"
+  type "note-body" "- [ ] first\n  - [ ] nested"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Checklist"
+  clock data
+  clock settle
+  tap "view-task-1"
+  clock +2500
+  clock data
+  clock settle
+  expect state editorBody == "- [ ] first\n  - [x] nested"
+  back
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "rt1@example.com"
+  type "password" "Passw0rd!23"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "Checklist"
+  clock data
+  clock settle
+  expect state editorBody == "- [ ] first\n  - [x] nested"
+
+test "a code block renders with a copy button"
+  type "email" "rt2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Rosa"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Snippet"
+  type "note-body" "```js\nconst x = 1;\n```"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Snippet"
+  clock data
+  clock settle
+  expect tree has "view-code-copy-0"
+  expect state codeHl.blocks.0 .tokens.0 .k == "kw"
+  expect state codeHl.blocks.0 .tokens.0 .t == "const"
+  tap "view-code-copy-0"
+  clock settle
+  expect state codeCopied == "note-body-view-0"
+  expect state editorBody == "```js\nconst x = 1;\n```"
+
+test "the toolbar bolds a selection in the new-note editor"
+  type "email" "rt3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Ruth"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  expect tree has "fmt-bold"
+  type "note-title" "Bold test"
+  type "note-body" "hello world"
+  type "note-body" key "Shift+ArrowLeft"
+  type "note-body" key "Shift+ArrowLeft"
+  type "note-body" key "Shift+ArrowLeft"
+  type "note-body" key "Shift+ArrowLeft"
+  type "note-body" key "Shift+ArrowLeft"
+  clock settle
+  tap "fmt-bold"
+  clock settle
+  expect text "note-body" == "hello **world**"
+
+test "a numbered list and a code block come back exactly as saved"
+  type "email" "rt4@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Ravi"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Fidelity"
+  type "note-body" "1. one\n2. two\n\n```js\nconst x = 1;\n```"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "rt4@example.com"
+  type "password" "Passw0rd!23"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "Fidelity"
+  clock data
+  clock settle
+  expect state editorBody == "1. one\n2. two\n\n```js\nconst x = 1;\n```"
+
+test "a task saved in the old escaped form still checks off"
+  type "email" "rt5@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Lee"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Legacy"
+  type "note-body" "*   \\[ \\] old task"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Legacy"
+  clock data
+  clock settle
+  expect tree has "view-task-0"
+  tap "view-task-0"
+  clock +2500
+  clock data
+  clock settle
+  expect state editorBody == "- [x] old task"
+
+test "a board card dragged into another column joins that section"
+  type "email" "dnd1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Chores"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Chores"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  expect text "board-count-none" == "1"
+  tap "Hold and drag Sweep to reorder" drag 252 0
+  clock data
+  clock settle
+  expect text "board-count-none" == "0"
+  expect state tasks.tasks.length == 1
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+
+test "sections are reordered from the list menu by dragging their handles"
+  type "email" "dnd2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Plans"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Plans"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Alpha"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Beta"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Alpha"
+  expect state sections.sections.1 .name == "Beta"
+  tap "list-menu"
+  clock settle
+  tap "menu-reorder-sections"
+  clock settle
+  expect state reorderingSections == true
+  expect tree has "section-reorder"
+  tap "Hold and drag Alpha to reorder" drag 0 80
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Beta"
+  tap "section-reorder-done"
+  clock settle
+  expect state reorderingSections == false
+  expect tree missing "section-reorder"
+
+test "a section is renamed by tapping its name and saved on Enter"
+  type "email" "ren1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Renames"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Renames"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Outside"
+  tap "Outside"
+  clock settle
+  expect tree has "section-rename-input"
+  type "section-rename-input" "Yard work"
+  type "section-rename-input" key "Enter"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Yard work"
+  expect tree missing "section-rename-input"
+
+test "an add-task field closes and clears when it loses focus"
+  type "email" "blur1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Blurs"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Blurs"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "section-add-none"
+  clock settle
+  type "section-add-input" "Stray draft"
+  tap "uncategorized-header"
+  clock settle
+  expect tree missing "section-add-input"
+  expect state tasks.tasks.length == 0
+  tap "section-add-none"
+  clock settle
+  expect tree has "section-add-input"
+  type "section-add-input" "Kept"
+  type "section-add-input" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 1
+  expect state tasks.tasks.0 .title == "Kept"
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Half typed"
+  tap "uncategorized-header"
+  clock settle
+  expect tree missing "list-quick-title"
+  expect state tasks.tasks.length == 1
+
+test "a list row dragged into another section joins that section"
+  type "email" "dnd3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Yardwork"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Yardwork"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .sectionId == ""
+  tap "Hold and drag Sweep to reorder" drag 0 160
+  clock data
+  clock settle
+  expect state sections.sections.0 .tasks.0 .title == "Sweep"
+  expect state sections.sections.0 .tasks.length == 1
+
+test "a task's details: flag, url, repeat and time are saved"
+  time-zone "UTC"
+  type "email" "ria@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Trip"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Trip"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Renew passport"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Open Renew passport"
+  clock data
+  clock settle
+  type "task-url" "https://travel.example.com/passport"
+  tap "task-flag"
+  tap "task-date-toggle"
+  clock settle
+  type "task-due" "2026-11-20"
+  tap "task-time-toggle"
+  clock settle
+  type "task-time" "14:30"
+  type "task-repeat" "yearly"
+  type "task-reminder" "1d"
+  tap "task-save"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .url == "https://travel.example.com/passport"
+  expect state tasks.tasks.0 .flagged == true
+  expect state tasks.tasks.0 .recurrence == "yearly"
+  expect state tasks.tasks.0 .dueDay == "2026-11-20"
+  expect state tasks.tasks.0 .dueTime == "14:30"
+  expect state tasks.tasks.0 .dueHasTime == true
+  tap "Open Renew passport"
+  clock data
+  clock settle
+  tap "task-date-toggle"
+  clock settle
+  expect tree missing "task-due"
+  tap "task-date-toggle"
+  clock settle
+  expect tree has "task-due"
+
+test "a repeating task advances its due date when checked off"
+  time-zone "UTC"
+  type "email" "rhea@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Routines"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Routines"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Water plants"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Open Water plants"
+  clock data
+  clock settle
+  tap "task-date-toggle"
+  clock settle
+  type "task-due" "2026-11-20"
+  type "task-repeat" "daily"
+  tap "task-save"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .recurrence == "daily"
+  tap "Check off Water plants"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == false
+  expect state tasks.tasks.0 .dueDay == "2026-11-21"
+
+test "a list gets an icon and color"
+  type "email" "icon1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Gear"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Gear"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "list-edit"
+  clock settle
+  tap "pick-icon-star"
+  tap "pick-color-34c759"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .icon == "star"
+  expect state lists.lists.0 .color == "#34C759"
+
+test "a section gets a color"
+  type "email" "icon2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Paint"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Paint"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Walls"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Walls"
+  tap "Style Walls"
+  clock settle
+  tap "pick-color-34c759"
+  clock data
+  clock settle
+  expect state sections.sections.0 .color == "#34C759"
+
+test "the desktop sidebar shows brand, recents and user"
+  size 1280x800
+  expect tree missing "sidebar"
+  expect tree has "auth-logo"
+  expect tree has "auth-footer"
+  expect tree missing "side-tab-notes"
+  tap "privacy-link"
+  clock settle
+  expect tree has "legal-body"
+  back
+  clock settle
+  expect tree has "terms-link"
+  type "email" "sb1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state winW == 1280
+  expect tree has "sidebar"
+  expect tree has "sidebar-brand"
+  expect tree has "side-tab-notes"
+  expect tree has "sidebar-user"
+  tap "side-new-note"
+  clock settle
+  type "note-title" "Sidebar note"
+  type "note-body" "Shown in the sidebar"
+  tap "note-save"
+  clock data
+  clock settle
+  expect state sideNotes.0 .title == "Sidebar note"
+  tap "sidebar-user"
+  clock settle
+  expect text "persona-name" == "Sb"
+
+test "the sidebar's notes tree searches, folds and grows"
+  size 1280x800
+  type "email" "sb4@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect tree has "notes-pane"
+  tap "side-new-note"
+  clock settle
+  type "note-title" "Alpha note"
+  type "note-body" "first"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "side-new-note"
+  clock settle
+  type "note-title" "Beta note"
+  type "note-body" "second"
+  tap "note-save"
+  clock data
+  clock settle
+  expect state sideNotes.length == 2
+  type "side-search" "alpha"
+  clock settle
+  expect state sideNotes.length == 1
+  type "side-search" "zzz"
+  clock settle
+  expect state sideNotes.length == 0
+  expect tree has "side-notes-empty"
+  type "side-search" ""
+  clock settle
+  expect state sideNotes.length == 2
+  expect state sideNotesTall == false
+  tap "side-notes-fold"
+  clock settle
+  expect state sideNotesOpen == false
+  expect tree missing "side-notes-tree"
+  tap "side-notes-fold"
+  clock settle
+  expect tree has "side-notes-tree"
+
+test "the sidebar's tasks tree shows lists with their newest tasks and folds"
+  size 1280x800
+  type "email" "sb5@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  expect tree has "tasks-pane"
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Desk"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  expect state lists.lists.0 .name == "Desk"
+  tap "side-tasks-fold"
+  clock settle
+  expect state sideTasksOpen == false
+  expect tree missing "side-tasks-tree"
+  tap "side-tasks-fold"
+  clock settle
+  expect tree has "side-tasks-tree"
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Errands"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Add task to Errands"
+  clock settle
+  expect state newTaskListName == "Errands"
+  expect state newTaskOpen == true
+  tap "new-task-cancel"
+  clock settle
+  tap "side-new-folder"
+  clock settle
+  type "side-folder-draft" "Home"
+  tap "side-add-folder"
+  clock data
+  clock settle
+  expect state taskFolders.folders.0 .name == "Home"
+
+test "the desktop sidebar switches tabs"
+  size 1280x800
+  type "email" "sb3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  expect state nav.tab == "tasks"
+  tap "side-tab-calendar"
+  clock settle
+  expect state nav.tab == "calendar"
+
+test "the phone layout keeps the tab bar"
+  size 390x844
+  type "email" "sb2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state winW == 390
+  expect tree has "tabs"
+  expect tree has "persona"
+  expect tree missing "sidebar"
+
+test "settings: display name and appearance are saved"
+  type "email" "pat@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Pat"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "menu-settings"
+  clock settle
+  type "settings-name" "Patricia"
+  tap "settings-name-save"
+  clock data
+  clock settle
+  expect state profile.displayName == "Patricia"
+  expect text "persona-name" == "Patricia"
+  tap "appearance-dark"
+  clock settle
+  expect state appearance == "dark"
+  tap "appearance-auto"
+  clock settle
+  expect state appearance == "auto"
+
+test "change password: wrong current is refused, then it works and the new password signs in"
+  type "email" "wren@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Lee"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "menu-settings"
+  clock settle
+  type "pw-current" "Wrongpass!1"
+  type "pw-new" "Newpass!456"
+  type "pw-confirm" "Newpass!456"
+  tap "pw-save"
+  clock data
+  clock settle
+  expect text "pw-error" == "Wrong current password."
+  type "pw-current" "Passw0rd!23"
+  tap "pw-save"
+  clock data
+  clock settle
+  expect text "pw-done" == "Password changed"
+  tap "settings-done"
+  clock settle
+  tap "persona"
+  clock settle
+  tap "sign-out"
+  clock data
+  clock settle
+  type "email" "wren@example.com"
+  type "password" "Newpass!456"
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect state shown == "Lee"
+
+test "choosing an avatar icon and color is saved"
+  type "email" "mo@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Mo"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "persona"
+  clock settle
+  tap "menu-settings"
+  clock settle
+  tap "avatar-style"
+  clock settle
+  tap "pick-icon-star"
+  clock data
+  clock settle
+  tap "pick-color-34c759"
+  clock data
+  clock settle
+  expect state profile.avatarIcon == "star"
+  expect state profile.avatarColor == "#34C759"
+  expect tree has "settings-avatar-preview"
+
+test "links draw app-side and an image can be a link"
+  type "email" "rt9@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Rosa"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Links"
+  type "note-body" "# See [Apple](https://apple.com)\n\n[![pic](https://example.com/a.png)](https://example.com)\n\nthen\n\n![plain](https://example.com/b.png)"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Links"
+  clock data
+  clock settle
+  expect tree has "view-image-link-2"
+  expect tree has "view-image-6"
+
+test "an image is moved and removed from the bar that shows on its line"
+  type "email" "rt10@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Rosa"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Pics"
+  type "note-body" "A\n\n![i](https://example.com/a.png)\n\nB"
+  type "note-body" key "ArrowUp"
+  type "note-body" key "ArrowUp"
+  clock settle
+  expect tree has "image-bar"
+  tap "image-down"
+  clock settle
+  expect state editorBody == "A\n\nB\n\n![i](https://example.com/a.png)"
+  tap "image-remove"
+  clock settle
+  expect state editorBody == "A\n\nB"
+
+test "each list remembers whether it is a list or a board"
+  type "email" "mem1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Pets"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Plain"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Pets"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  expect tree has "board-col-none"
+  expect state lists.lists.0 .viewMode == "board"
+  back
+  clock settle
+  tap "Plain"
+  clock data
+  clock settle
+  expect tree missing "board-col-none"
+  back
+  clock settle
+  tap "Pets"
+  clock data
+  clock settle
+  expect tree has "board-col-none"
+
+test "a board card shows its subtasks with a checkbox"
+  type "email" "bsub1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Deck"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Deck"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Stain the deck"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Open Stain the deck"
+  clock data
+  clock settle
+  type "subtask-draft" "Buy stain"
+  tap "add-subtask"
+  clock data
+  clock settle
+  back
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  clock data
+  clock settle
+  expect tree has "board-col-none"
+  expect state boardSubtasks.tasks.0 .title == "Buy stain"
+  expect state boardSubtasks.tasks.0 .isDone == false
+  tap "Check off Buy stain"
+  clock data
+  clock settle
+  expect state boardSubtasks.tasks.0 .isDone == true
+
+test "a subscription that is not an address says so"
+  type "email" "sub1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-calendar"
+  clock data
+  clock settle
+  tap "cal-menu"
+  clock settle
+  tap "menu-manage-calendars"
+  clock settle
+  tap "add-subscription"
+  clock settle
+  type "sub-url" "not an address"
+  tap "sub-add"
+  clock data
+  clock settle
+  expect tree has "sub-error"
+  tap "sub-mode-account"
+  clock settle
+  expect tree has "sub-preset-icloud"
+  tap "sub-preset-icloud"
+  clock settle
+  expect text "sub-server" == "https://caldav.icloud.com"
+  expect tree has "sub-apple-password"
+
+test "a new list and a new section open sheets with icon and color, and Uncategorized can be renamed"
+  type "email" "nl1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Studio"
+  tap "pick-color-34c759"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .color == "#34C759"
+  tap "Studio"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Gear"
+  tap "pick-color-34c759"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state sections.sections.0 .name == "Gear"
+  expect state sections.sections.0 .color == "#34C759"
+  tap "section-name-none"
+  clock settle
+  type "section-rename-input" "Inbox"
+  type "section-rename-input" key "Enter"
+  clock data
+  clock settle
+  expect state lists.lists.0 .uncategorizedName == "Inbox"
+
+test "a grocery list hides checked items until the list menu reveals them"
+  type "email" "gr1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Groceries"
+  tap "edit-list-grocery"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect state lists.lists.0 .grocery == true
+  tap "Groceries"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Milk"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 1
+  tap "Open Milk"
+  clock data
+  clock settle
+  expect tree has "task-notes"
+  expect tree missing "task-url"
+  expect tree missing "task-flag"
+  back
+  clock settle
+  tap "Check off Milk"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == true
+  tap "list-menu"
+  clock settle
+  tap "menu-show-completed"
+  clock settle
+  expect state showCompleted == true
+  tap "Check off Milk"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == false
+
+test "a section with more than one task folds shut and open"
+  type "email" "fold1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Folding"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Folding"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "One"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  expect tree missing "section-fold-none"
+  type "list-quick-title" "Two"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "section-fold-none"
+  clock settle
+  expect state foldedCols == "none"
+  tap "section-fold-none"
+  clock settle
+  expect state foldedCols == ""
+  tap "Check off One"
+
+test "inline code, alone on a line or among text, is a tap-to-copy chip"
+  type "email" "tk1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Ticks"
+  type "note-body" "Intro\n\n`token-one`\n`token-two`\nGitHub: `ghp_abc123` done"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Ticks"
+  clock data
+  clock settle
+  tap "view-code-copy-2"
+  clock settle
+  expect state codeCopied == "note-body-view-2"
+  tap "view-code-copy-3"
+  clock settle
+  expect state codeCopied == "note-body-view-3"
+  tap "view-code-copy-4-1"
+  clock settle
+  expect state codeCopied == "note-body-view-4-1"
+
+test "a vault note hides its code, copies on tap and shows it from the eye"
+  type "email" "vault1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Keys"
+  type "note-body" "GitHub: `ghp_secret1` done\n`token-two`"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Keys"
+  clock data
+  clock settle
+  expect tree missing "view-code-eye-0-1"
+  tap "note-vault"
+  clock data
+  clock settle
+  expect state editorVault == true
+  expect tree has "view-code-eye-0-1"
+  expect text "view-code-copy-0-1" == "••••••••"
+  tap "view-code-copy-0-1"
+  clock settle
+  expect state codeCopied == "note-body-view-0-1"
+  tap "view-code-eye-0-1"
+  clock settle
+  expect text "view-code-copy-0-1" == "ghp_secret1"
+  tap "view-code-eye-0-1"
+  clock settle
+  expect text "view-code-copy-0-1" == "••••••••"
+  expect state notesShown.0 .tags.0 == "vault"
+
+test "the code button on a bare caret puts a selected placeholder between ticks"
+  type "email" "code1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  tap "fmt-code"
+  clock settle
+  expect state editorBody == "`code`"
+
+test "the live channel connects and hears this account's own changes"
+  type "email" "live1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  clock data
+  expect state live.status == "open"
+  expect state live.ticks == 1
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Shared"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  clock data
+  expect state live.ticks == 2
+
+test "a card dragged into the Done column finishes it, and finishing a task moves it there"
+  type "email" "done1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Ship"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Ship"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Done"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Pack"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  type "list-quick-title" "Label"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  tap "Hold and drag Pack to reorder" drag 252 0
+  clock data
+  clock settle
+  expect state tasks.tasks.1 .isDone == true
+  expect text "board-count-none" == "1"
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  tap "Check off Label"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == true
+  expect state sections.sections.0 .tasks.length == 2
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  expect tree has "done-search"
+  type "done-search" "zzz"
+  clock settle
+  expect state doneQuery == "zzz"
+
+test "on a wide window a task opens as a bottom drawer over its list"
+  size 1280x800
+  type "email" "drawer1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Chores"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  tap "Chores"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Open Sweep"
+  clock settle
+  expect tree has "drawer"
+  tap "drawer-grabber"
+  clock settle
+  expect tree missing "drawer"
+  tap "Open Sweep"
+  clock settle
+  type "task-title" "Sweep up"
+  tap "task-save"
+  clock data
+  clock settle
+  expect tree missing "drawer"
+  expect state tasks.tasks.0 .title == "Sweep up"
+
+test "tapping an image in a note opens it full size"
+  type "email" "zoom1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Pics"
+  type "note-body" "Look\n\n![pic](https://example.com/a.png)"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Pics"
+  clock data
+  clock settle
+  tap "view-image-zoom-2"
+  clock settle
+  expect state lightboxUrl == "https://example.com/a.png"
+
+test "on a wide window settings and new list open as a bottom drawer and close again"
+  size 1280x800
+  type "email" "sheets1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "sidebar-user"
+  clock settle
+  tap "menu-settings"
+  clock settle
+  expect tree has "sheet"
+  expect tree has "settings-done"
+  tap "settings-done"
+  clock settle
+  expect tree missing "sheet"
+  tap "side-new-list"
+  clock settle
+  expect tree has "sheet"
+  type "edit-list-name" "Garage"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  expect tree missing "sheet"
+  expect state lists.lists.0 .name == "Garage"
+  tap "side-new-list"
+  clock settle
+  tap "sheet-grabber"
+  clock settle
+  expect tree missing "sheet"
+
+test "the bell opens the notifications popover"
+  type "email" "nadia@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  expect tree has "bell"
+  tap "bell"
+  clock settle
+  expect tree has "notif-empty"
+
+
+test "the sign-in page lets a self-hoster set the server address"
+  expect tree has "server-toggle"
+  expect tree missing "server-input"
+  tap "server-toggle"
+  clock settle
+  expect tree has "server-input"
+  type "server-input" "not an address"
+  tap "server-save"
+  clock data
+  clock settle
+  expect tree has "server-error"
+  type "server-input" "https://notes.example.com/"
+  tap "server-save"
+  clock data
+  clock settle
+  expect tree has "auth-logo"
+  expect text "server-toggle" == "Server: https://notes.example.com"
+
+test "the password box on sign-in can be revealed"
+  expect tree has "password-reveal"
+  type "password" "Passw0rd!23"
+  tap "password-reveal"
+  clock settle
+  expect text "password" == "Passw0rd!23"
+
+test "images inserted back to back are laid out in one scrolling row"
+  type "email" "gallery1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Trip"
+  type "note-body" "Look\n\n![a](https://example.com/a.png)\n\n![b](https://example.com/b.png)\n\n![c](https://example.com/c.png)"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Trip"
+  clock data
+  clock settle
+  expect tree has "view-gallery-2"
+  expect tree missing "view-image-2"
+  tap "view-gallery-zoom-2"
+  clock settle
+  expect state lightboxUrl == "https://example.com/a.png"
+  expect tree has "lightbox-strip"
+  tap "lightbox-next"
+  clock settle
+  expect state lightboxUrl == "https://example.com/b.png"
+  tap "lightbox-prev"
+  tap "lightbox-prev"
+  clock settle
+  expect state lightboxUrl == "https://example.com/c.png"
+
+test "the format bar has H1 to H4, a divider and a link for an image line"
+  type "email" "fmt2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  expect tree has "fmt-h1"
+  expect tree has "fmt-h4"
+  type "note-body" "Title"
+  tap "fmt-h3"
+  clock settle
+  expect state editorBody == "### Title"
+  type "note-body" "above"
+  tap "fmt-rule"
+  clock settle
+  expect state editorBody == "above\n\n---\n\n"
+  type "note-body" "![a](https://example.com/a.png)"
+  clock settle
+  tap "fmt-link"
+  clock settle
+  type "fmt-link-url" "https://example.com"
+  tap "fmt-link-apply"
+  clock settle
+  expect state editorBody == "[![a](https://example.com/a.png)](https://example.com)"
+
+test "a card moved on the board while its drawer is open keeps its new section when the drawer saves"
+  size 1280x800
+  type "email" "dnd3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Chores"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  tap "Chores"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Outside"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  tap "Open Sweep"
+  clock settle
+  expect tree has "drawer"
+  tap "Hold and drag Sweep to reorder" drag 252 0
+  clock data
+  clock settle
+  tap "task-save"
+  clock data
+  clock settle
+  expect text "board-count-none" == "0"

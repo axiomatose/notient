@@ -1,0 +1,22 @@
+# Self-hosting: copy to docker-compose.yml and .env.example to .env, then `docker compose up -d`.
+# The API serves the web app too: build it once (README, "Self-hosting") and mount the folder at /web.
+services:
+  api:
+    build:
+      context: ./server
+    user: "1000:1000"
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3301
+      DATA_DIR: /data
+      WEB_DIST: /web
+      SQLITE_JOURNAL_MODE: DELETE
+    ports:
+      - "${API_PORT:-3301}:3301"
+    volumes:
+      - ./data:/data:Z
+      - ./app/dist:/web:ro
