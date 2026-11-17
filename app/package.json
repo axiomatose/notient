@@ -1,6 +1,7 @@
 {
   "name": "app",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "build": "bun exact.mjs web-build --out dist",
     "start": "bun exact.mjs serve dist"

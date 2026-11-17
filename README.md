@@ -96,4 +96,4 @@ Issues and pull requests are welcome. Read `documentation/TABLEOFCONTENTS.md` be
 
 ## License
 
-Not yet chosen.
+[MIT](LICENSE)
