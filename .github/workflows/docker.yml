@@ -41,6 +41,24 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - name: Find Exact's revision
+        id: rev
+        run: echo "sha=$(git -C exact rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the web build's tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/hermes-lean-sys
+            ~/.cache/exact
+            notient/app/target
+          key: web-${{ steps.rev.outputs.sha }}-${{ hashFiles('notient/app/app.json', 'notient/app/app.contract', 'notient/app/app.ts') }}
+          restore-keys: |
+            web-${{ steps.rev.outputs.sha }}-
+            web-
+
       - name: Build the web app
         working-directory: notient/app
         env:

@@ -50,6 +50,28 @@ jobs:
         working-directory: exact
         run: bun install --frozen-lockfile
 
+      # Rust builds from scratch take most of the run, so keep them. Saved even when the build fails, so a retry resumes.
+      - name: Find Exact's revision
+        id: rev
+        shell: bash
+        run: echo "sha=$(git -C exact rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/hermes-lean-sys
+            ~/.cache/exact
+            notient/app/target
+            notient/app/.exact/shells
+          key: windows-${{ steps.rev.outputs.sha }}-${{ hashFiles('notient/app/app.json', 'notient/app/app.contract', 'notient/app/app.ts') }}
+          restore-keys: |
+            windows-${{ steps.rev.outputs.sha }}-
+            windows-
+
       # PowerShell, not Git Bash: Exact's setup shells out to tar, and Git's GNU tar reads "C:\..." as a remote host.
       - name: Set up the Windows toolchain
         shell: pwsh
@@ -64,6 +86,19 @@ jobs:
         run: |
           $env:SOCKET_URL = $env:API_BASE_URL -replace '^http', 'ws'
           bun exact.mjs windows --release
+
+      - name: Save the build cache
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/hermes-lean-sys
+            ~/.cache/exact
+            notient/app/target
+            notient/app/.exact/shells
+          key: windows-${{ steps.rev.outputs.sha }}-${{ hashFiles('notient/app/app.json', 'notient/app/app.contract', 'notient/app/app.ts') }}
 
       - name: Collect the build
         shell: bash
