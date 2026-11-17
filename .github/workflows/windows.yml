@@ -53,7 +53,7 @@ jobs:
       - name: Set up the Windows toolchain
         shell: bash
         working-directory: notient/app
-        run: bun exact.mjs setup
+        run: bun ../../exact/scripts/exact.mjs setup
 
       - name: Build the app
         shell: bash
