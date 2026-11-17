@@ -10,7 +10,7 @@
 - **Why grants are scheme-wide:** the app's grants (`app/app.ts`) are `net.fetch https: / http: / local-network`, `net.websocket wss: / ws: / local-network`. A grant naming the build's origin is sealed by the build (FNV `seal` in the grant set, checked by `grant-admission.js`), so rewriting the origin would invalidate it. ATS still blocks plain http beyond the LAN on Apple platforms.
 - **Native apps:** sign-in page → "Use your own server" (`secret.keep server`); saving signs out. `originOf(store)` in `app.ts` picks it over the build's address.
 - **Dockerfile:** node:22-slim; `web-dist/` (filled by CI, `.gitkeep` otherwise) is exported as `WEB_DIST` when it holds `index.html`.
-- **Data:** `DATA_DIR` (`/data` in compose): `app.db`, `notes/`, `uploads/`.
+- **Data:** `DATA_DIR=/data` (set in the image, owned by `node`): `app.db` (created on first start), `notes/`, `uploads/`. Compose mounts the named volume `notient-data` there. A bind mount must be writable by uid 1000 (`chown 1000:1000 data`), otherwise SQLite cannot create the file.
 
 ## Image workflow
 - Actions → "Docker image" → Run workflow; inputs `tag` (default `latest`), `exact_repo`, `exact_ref`. Secret `EXACT_TOKEN` only if Exact is private.

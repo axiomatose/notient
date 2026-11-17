@@ -5,7 +5,6 @@ services:
     image: ghcr.io/axiomatose/notient:latest
     # To build from this checkout instead: replace the line above with
     # build: { context: ./server }
-    user: "1000:1000"
     restart: unless-stopped
     env_file:
       - ./.env
@@ -13,9 +12,13 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3301
-      DATA_DIR: /data
       SQLITE_JOURNAL_MODE: DELETE
     ports:
       - "${API_PORT:-3301}:3301"
     volumes:
-      - ./data:/data:Z
+      # A named volume starts out owned by the container's user. To keep the data in a folder instead,
+      # use `- ./data:/data` and run `mkdir data && chown 1000:1000 data` first.
+      - notient-data:/data
+
+volumes:
+  notient-data:

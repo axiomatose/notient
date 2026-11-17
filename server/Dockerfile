@@ -24,7 +24,8 @@ COPY --chown=node:node . .
 # The API serves it from the same address.
 
 # Ensure data directory exists and is writable by the node user
-RUN mkdir -p /app/data && chown -R node:node /app/data
+RUN mkdir -p /app/data /data && chown -R node:node /app/data /data
+ENV DATA_DIR=/data
 
 USER node
 

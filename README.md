@@ -70,7 +70,7 @@ docker compose up -d
 Open `PUBLIC_URL` in a browser, create an account, done. The web app uses whatever `PUBLIC_URL` you set, so the one published image (`ghcr.io/axiomatose/notient`) works for any domain.
 
 - **HTTPS.** Put it behind Caddy, Traefik, nginx or a tunnel. Browsers only install a PWA and register push over HTTPS, and iOS only allows plain `http` on a local network.
-- **Your data.** The SQLite database, your notes as Markdown files and uploads are all in `./data`. Back that folder up.
+- **Your data.** The SQLite database (created on first start), your notes as Markdown files and uploads live in the `notient-data` Docker volume. Back it up, or bind-mount a folder instead (see the comments in the compose file).
 - **The native apps.** Install the iOS or macOS app, and on the sign-in screen choose **Use your own server** and enter your `PUBLIC_URL`.
 - **Web push** needs a VAPID key pair (`npm run vapid-generate` in `server/`); every other setting is in [`server/.env.example`](server/.env.example).
 
