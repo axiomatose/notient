@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:26-slim
 
 # Install dependencies for better-sqlite3 and argon2
 RUN apt-get update && apt-get install -y \
