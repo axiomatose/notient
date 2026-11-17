@@ -50,6 +50,11 @@ jobs:
         working-directory: exact
         run: bun install --frozen-lockfile
 
+      # Git Bash's GNU tar reads "C:\..." as a remote host; Windows' own tar does not.
+      - name: Use Windows' tar
+        shell: pwsh
+        run: Add-Content $env:GITHUB_PATH "$env:SystemRoot\System32"
+
       - name: Set up the Windows toolchain
         shell: bash
         working-directory: notient/app
