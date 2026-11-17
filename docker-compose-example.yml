@@ -1,9 +1,11 @@
 # Self-hosting: copy to docker-compose.yml and .env.example to .env, then `docker compose up -d`.
-# The API serves the web app too: build it once (README, "Self-hosting") and mount the folder at /web.
+# The image comes from ghcr.io (the "Docker image" workflow). If it was built with a web app inside,
+# the API serves it; otherwise build the web app yourself (README, "Self-hosting") and keep the /web mount.
 services:
   api:
-    build:
-      context: ./server
+    image: ghcr.io/axiomatose/notient:latest
+    # To build from this checkout instead: replace the line above with
+    # build: { context: ./server }
     user: "1000:1000"
     restart: unless-stopped
     env_file:

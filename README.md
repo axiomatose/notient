@@ -66,6 +66,8 @@ cp docker-compose-example.yml docker-compose.yml
 docker compose up -d
 ```
 
+The image is `ghcr.io/axiomatose/notient`. The web app reads the server's address when it is built, so build it for your own address (set `API_BASE_URL` in `app/.env.local` first), or run the **Docker image** workflow on your fork with your address to get one image with the web app inside.
+
 - Put it behind HTTPS (Caddy, Traefik, nginx or a tunnel). Browsers only install a PWA and register push over HTTPS.
 - Everything the server stores is in `./data`: the SQLite database, your notes as Markdown files, and uploads. Back that folder up.
 - The native apps connect to any server: on the sign-in screen choose **Use your own server** and enter its address.
@@ -88,7 +90,7 @@ cd server && npm test                              # API
 cd app && bun exact.mjs test app.test.contract     # the app, driven headless
 ```
 
-Stop the dev server first: the app tests start their own API on a spare port.
+Stop the dev server first: the app tests start their own API on a spare port. The same API tests run from the **CI** workflow in the Actions tab.
 
 ## Contributing
 

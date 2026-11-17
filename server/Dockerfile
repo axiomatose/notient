@@ -20,6 +20,9 @@ RUN npm install && npm rebuild better-sqlite3 argon2
 # .dockerignore will prevent copying host node_modules
 COPY --chown=node:node . .
 
+# The web app, when the image was built with one (CI puts it in web-dist/).
+# The API serves it from the same address.
+
 # Ensure data directory exists and is writable by the node user
 RUN mkdir -p /app/data && chown -R node:node /app/data
 
@@ -29,4 +32,4 @@ USER node
 EXPOSE 3301
 
 # Start the application
-CMD ["npm", "start"]
+CMD ["sh", "-c", "if [ -f web-dist/index.html ]; then export WEB_DIST=\"$PWD/web-dist\"; fi; exec npm start"]
