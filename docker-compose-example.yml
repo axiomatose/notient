@@ -1,6 +1,5 @@
 # Self-hosting: copy to docker-compose.yml and .env.example to .env, then `docker compose up -d`.
-# The image comes from ghcr.io (the "Docker image" workflow). If it was built with a web app inside,
-# the API serves it; otherwise build the web app yourself (README, "Self-hosting") and keep the /web mount.
+# One container: the API and the web app, at the address you set as PUBLIC_URL in .env.
 services:
   api:
     image: ghcr.io/axiomatose/notient:latest
@@ -15,10 +14,8 @@ services:
       HOST: 0.0.0.0
       PORT: 3301
       DATA_DIR: /data
-      WEB_DIST: /web
       SQLITE_JOURNAL_MODE: DELETE
     ports:
       - "${API_PORT:-3301}:3301"
     volumes:
       - ./data:/data:Z
-      - ./app/dist:/web:ro

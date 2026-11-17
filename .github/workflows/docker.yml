@@ -1,4 +1,4 @@
-# Builds the Notient image and publishes it to ghcr.io. Manual only: Actions tab > "Docker image" > Run workflow.
+# Builds the Notient image (API + web app) and publishes it to ghcr.io. Manual only: Actions tab > "Docker image" > Run workflow.
 name: Docker image
 
 on:
@@ -7,9 +7,6 @@ on:
       tag:
         description: Image tag (the commit's short SHA is always added)
         default: latest
-      api_base_url:
-        description: "Bake the web app in for this public address, e.g. https://notes.example.com. Empty builds the API alone"
-        default: ""
       exact_repo:
         description: Where to fetch Exact from, for the web build
         default: expo/exact
@@ -30,8 +27,8 @@ jobs:
           path: notient
 
       # The web app is built by Exact, which the app finds two folders up from app/ (see app/exact.mjs).
+      # It is built with a placeholder address; the server swaps in its PUBLIC_URL at start.
       - name: Check out Exact
-        if: inputs.api_base_url != ''
         uses: actions/checkout@v7
         with:
           repository: ${{ inputs.exact_repo }}
@@ -40,18 +37,16 @@ jobs:
           token: ${{ secrets.EXACT_TOKEN || github.token }}
 
       - name: Set up Bun
-        if: inputs.api_base_url != ''
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
 
       - name: Build the web app
-        if: inputs.api_base_url != ''
         working-directory: notient/app
         env:
-          API_BASE_URL: ${{ inputs.api_base_url }}
+          API_BASE_URL: https://notient-placeholder.invalid
+          SOCKET_URL: wss://notient-placeholder.invalid
         run: |
-          export SOCKET_URL="${API_BASE_URL/http/ws}"
           bun ../../exact/scripts/exact.mjs setup --platform web
           bun exact.mjs web-build --out dist
           cp -R dist/. ../server/web-dist/

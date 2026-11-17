@@ -2,34 +2,61 @@
 // and verify; .env.local's API_BASE_URL points real builds at a deployment).
 import type { Answer, Result, Sources, Storage, StreamEvent } from './app.contract.d.ts';
 
-const ORIGIN = import.meta.env.API_BASE_URL ?? 'http://127.0.0.1:8787';
-export const API = ORIGIN;
+const origin = import.meta.env.API_BASE_URL ?? 'http://127.0.0.1:8787';
+export const API = origin;
 // A self-hoster's own server, kept on the device (sign-in page); the build's address is the default.
 const kept = (store: unknown): string => {
   const v = (store as { get?(k: string): unknown } | undefined)?.get?.('server');
   return typeof v === 'string' ? v : '';
 };
-const originOf = (store: unknown): string => kept(store) || ORIGIN;
+const originOf = (store: unknown): string => kept(store) || origin;
 // The live channel's address: .env.local's SOCKET_URL (ws:// or wss:// with the API's host); build and test use the loopback default.
 const SOCKET = import.meta.env.SOCKET_URL ?? 'ws://127.0.0.1:8787';
-export const grants = [
-  `net.fetch ${ORIGIN}`,
-  `net.websocket ${SOCKET}`,
-  'net.fetch https:',
-  'device.local-network lanPurpose',
-  'net.fetch local-network',
-  'net.websocket wss:',
-  'net.websocket local-network',
-  'secret.keep server',
-  'secret.keep token',
-  'secret.keep name',
-  'secret.keep email',
-  'secret.keep appearance',
-  'secret.keep boards',
-  'fs.read app:/data/notes-cache.json',
-  'fs.write app:/data/notes-cache.json',
-  'fs.read app:/tmp/picked',
-].join('\n');
+// The server's address is the person's to choose (their own domain, a LAN box), so the grants name schemes.
+// The build's own address is granted too where tools need it (dev, test); the published web bundle is built
+// with a placeholder address and no address grant, because a grant naming it is sealed by the build and the
+// server swaps that address for its own at start (server/src/lib/webBundle.js).
+// App Transport Security still refuses plain http beyond the local network on Apple platforms.
+export const grants = {
+  'http://127.0.0.1:8787': [
+    'net.fetch http://127.0.0.1:8787',
+    'net.websocket ws://127.0.0.1:8787',
+    'net.fetch https:',
+    'net.fetch http:',
+    'device.local-network lanPurpose',
+    'net.fetch local-network',
+    'net.websocket wss:',
+    'net.websocket ws:',
+    'net.websocket local-network',
+    'secret.keep server',
+    'secret.keep token',
+    'secret.keep name',
+    'secret.keep email',
+    'secret.keep appearance',
+    'secret.keep boards',
+    'fs.read app:/data/notes-cache.json',
+    'fs.write app:/data/notes-cache.json',
+    'fs.read app:/tmp/picked',
+  ],
+  'https://notient-placeholder.invalid': [
+    'net.fetch https:',
+    'net.fetch http:',
+    'device.local-network lanPurpose',
+    'net.fetch local-network',
+    'net.websocket wss:',
+    'net.websocket ws:',
+    'net.websocket local-network',
+    'secret.keep server',
+    'secret.keep token',
+    'secret.keep name',
+    'secret.keep email',
+    'secret.keep appearance',
+    'secret.keep boards',
+    'fs.read app:/data/notes-cache.json',
+    'fs.write app:/data/notes-cache.json',
+    'fs.read app:/tmp/picked',
+  ],
+};
 
 
 // The native runtime has no FormData/Blob: build the multipart body as bytes.
@@ -450,7 +477,7 @@ const sources: Sources = {
     (store as Store).set('email', b.user.email);
     return { ok: true, error: '' };
   },
-  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: ORIGIN }),
+  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: origin }),
   // Blank returns to the build's server. Signing out is the caller's: a token belongs to one server.
   saveServer: ([url], store): Result<'saveServer'> => {
     const v = url.trim().replace(/\/+$/, '');

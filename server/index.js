@@ -1,19 +1,30 @@
 import { createServer } from "node:http";
 import path from "node:path";
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { loadConfig } from "./src/config.js";
 import { initializeDatabase } from "./src/db/index.js";
 import { buildApp } from "./src/server.js";
 import logger from "./src/utils/logger.js";
+import { prepareWebBundle } from "./src/lib/webBundle.js";
 
 const config = loadConfig();
 const db = initializeDatabase(config);
 
 // Serve the built web client from this origin when WEB_DIST is set, so the
 // browser app and the API it calls share one address (one port, no CORS).
-const webDist = process.env.WEB_DIST;
+let webDist = process.env.WEB_DIST;
+// A bundle built with the placeholder address is pointed at PUBLIC_URL (lib/webBundle.js).
+if (webDist) {
+  const prepared = prepareWebBundle({
+    source: webDist,
+    publicUrl: config.publicUrl,
+    target: path.join(os.tmpdir(), "notient-web"),
+  });
+  webDist = prepared.dir;
+}
 const app = express();
 if (webDist) {
   // The app's own routes (the only GETs that should return the client shell);

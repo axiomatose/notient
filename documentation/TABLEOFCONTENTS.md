@@ -69,6 +69,7 @@
 
 ## Sharing & Collaboration
 - **Notification bell, assignee notifications, live kinds (notes/calendar)** → [backend/collaboration.md](backend/collaboration.md)
+- **Self-hosting, published image, one image for any domain, web bundle address** → [backend/self-hosting.md](backend/self-hosting.md)
 - **Installing the web app (PWA manifest, Android Chrome)** → [backend/pwa-install.md](backend/pwa-install.md)
 - **Shared list access (view/edit), Claude's account** → [backend/collaboration.md](backend/collaboration.md)
 - **Note sharing, task sharing** → [frontend/pages/notes/notes.md](frontend/pages/notes/notes.md), [frontend/pages/tasks/tasks.md](frontend/pages/tasks/tasks.md)

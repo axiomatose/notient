@@ -57,23 +57,22 @@ bun exact.mjs mac --run
 
 ## Self-hosting
 
-The API also serves the web app, so one container is the whole install.
+One container runs the API and the web app.
 
 ```bash
-cp .env.example .env                    # set JWT_SECRET, ENCRYPTION_MASTER_KEY, PUBLIC_URL
-cp docker-compose-example.yml docker-compose.yml
-(cd app && bun exact.mjs web-build --out dist)   # the web app the server will serve
+curl -O https://raw.githubusercontent.com/axiomatose/notient/main/docker-compose-example.yml
+curl -o .env https://raw.githubusercontent.com/axiomatose/notient/main/.env.example
+mv docker-compose-example.yml docker-compose.yml
+# edit .env: JWT_SECRET, ENCRYPTION_MASTER_KEY (openssl rand -hex 32) and PUBLIC_URL, the address you will use
 docker compose up -d
 ```
 
-The image is `ghcr.io/axiomatose/notient`. The web app reads the server's address when it is built, so build it for your own address (set `API_BASE_URL` in `app/.env.local` first), or run the **Docker image** workflow on your fork with your address to get one image with the web app inside.
+Open `PUBLIC_URL` in a browser, create an account, done. The web app uses whatever `PUBLIC_URL` you set, so the one published image (`ghcr.io/axiomatose/notient`) works for any domain.
 
-- Put it behind HTTPS (Caddy, Traefik, nginx or a tunnel). Browsers only install a PWA and register push over HTTPS.
-- Everything the server stores is in `./data`: the SQLite database, your notes as Markdown files, and uploads. Back that folder up.
-- The native apps connect to any server: on the sign-in screen choose **Use your own server** and enter its address.
-- Generate keys with `openssl rand -hex 32`. Web push needs a VAPID pair (`npm run vapid-generate` in `server/`).
-
-Every setting is documented in [`server/.env.example`](server/.env.example).
+- **HTTPS.** Put it behind Caddy, Traefik, nginx or a tunnel. Browsers only install a PWA and register push over HTTPS, and iOS only allows plain `http` on a local network.
+- **Your data.** The SQLite database, your notes as Markdown files and uploads are all in `./data`. Back that folder up.
+- **The native apps.** Install the iOS or macOS app, and on the sign-in screen choose **Use your own server** and enter your `PUBLIC_URL`.
+- **Web push** needs a VAPID key pair (`npm run vapid-generate` in `server/`); every other setting is in [`server/.env.example`](server/.env.example).
 
 ## Layout
 
