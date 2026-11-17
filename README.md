@@ -39,7 +39,7 @@ An Apple-inspired notes, tasks and calendar suite that runs anywhere and is fast
 
 ## Run it from source
 
-You need [Bun](https://bun.sh), Node 20+, and an [Exact](https://github.com/expo/exact) checkout next to this repo (`../exact`), or point `EXACT` at it.
+You need [Bun](https://bun.sh), Node 22+, and an [Exact](https://github.com/expo/exact) checkout next to this repo (`../exact`), or point `EXACT` at it.
 
 ```bash
 # the API (SQLite, notes as files) on :8787; test data lives in app/
