@@ -25,14 +25,14 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           path: notient
 
       # The web app is built by Exact, which the app finds two folders up from app/ (see app/exact.mjs).
       - name: Check out Exact
         if: inputs.api_base_url != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.exact_repo }}
           ref: ${{ inputs.exact_ref }}
