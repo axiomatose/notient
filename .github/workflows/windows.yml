@@ -46,6 +46,10 @@ jobs:
           rustup show
           rustup target add x86_64-pc-windows-msvc
 
+      - name: Install Exact's packages
+        working-directory: exact
+        run: bun install --frozen-lockfile
+
       - name: Build the app
         shell: bash
         working-directory: notient/app
