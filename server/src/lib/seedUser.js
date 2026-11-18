@@ -2,9 +2,10 @@
  * Component: Starter content for new accounts, and the optional demo user
  * Documentation: documentation/backend/seed.md
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import { hashPassword } from "../utils/passwords.js";
 
@@ -230,4 +231,71 @@ export async function ensureDemoUser({ repos, config, storage }) {
   });
   await seedNewUser({ repos, config, storage, userId, now });
   return "created";
+}
+
+// Every row the demo user owns, in a stable order. Any edit, move, delete or addition changes the hash.
+const OWNED = [
+  ["notes", "user_id = ?"],
+  ["task_lists", "user_id = ?"],
+  ["task_sections", "user_id = ?"],
+  ["tasks", "user_id = ?"],
+  ["tasklist_folders", "user_id = ?"],
+  ["calendars", "user_id = ?"],
+  ["calendar_events", "calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)"],
+];
+
+/** A hash of the demo account's content (rows, profile and password). "" when the account is missing. */
+export function demoFingerprint(db) {
+  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(DEMO_EMAIL);
+  if (!user) return "";
+  const hash = createHash("sha256");
+  const { avatar_blob: blob, ...profile } = user;
+  hash.update(JSON.stringify([profile, blob ? blob.length : 0]));
+  for (const [table, where] of OWNED) {
+    const rows = db.prepare(`SELECT * FROM ${table} WHERE ${where} ORDER BY id`).all(user.id);
+    // last_sync moves on its own for synced calendars; the demo's are internal, so it stays null.
+    hash.update(JSON.stringify([table, rows.map(({ last_sync, ...row }) => row)]));
+  }
+  return hash.digest("hex");
+}
+
+/** Deletes the demo account (its rows go with it) and creates it again from the seed. */
+export async function resetDemoUser({ db, repos, config, storage }) {
+  const user = db.prepare("SELECT id FROM users WHERE email = ?").get(DEMO_EMAIL);
+  if (user) {
+    const noteIds = db.prepare("SELECT id FROM notes WHERE user_id = ?").all(user.id).map((n) => n.id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(user.id);
+    // Note bodies are files beside the database; drop the old ones too.
+    if (config?.notesDir) rmSync(join(config.notesDir, user.id), { recursive: true, force: true });
+    // The seeded pictures are copied per note; drop the old copies.
+    for (const id of noteIds) {
+      for (const [, stored] of Object.values(PICTURES)) await storage?.deleteNoteImage?.(id, stored).catch(() => {});
+    }
+  }
+  await ensureDemoUser({ repos, config, storage });
+}
+
+/**
+ * Keeps the demo account as seeded: resets it now, then every `everyMs` resets it again if its content differs from the seed.
+ * Returns a function that runs one check (used by tests).
+ */
+export async function keepDemoUserAsSeeded({ db, repos, config, storage, logger, everyMs = 5 * 60_000 }) {
+  let baseline = "";
+  const reset = async () => {
+    await resetDemoUser({ db, repos, config, storage });
+    baseline = demoFingerprint(db);
+  };
+  const check = async () => {
+    try {
+      if (demoFingerprint(db) !== baseline) {
+        await reset();
+        logger?.info("Demo user changed; reset to the seed");
+      }
+    } catch (error) {
+      logger?.error({ err: error }, "Demo user check failed");
+    }
+  };
+  await reset();
+  setInterval(check, everyMs).unref?.();
+  return check;
 }

@@ -9,7 +9,7 @@ import { initializeDatabase } from "./src/db/index.js";
 import { buildApp } from "./src/server.js";
 import { createRepositories } from "./src/db/index.js";
 import { createFileStorage } from "./src/lib/storage.js";
-import { ensureDemoUser } from "./src/lib/seedUser.js";
+import { keepDemoUserAsSeeded } from "./src/lib/seedUser.js";
 import logger from "./src/utils/logger.js";
 import { prepareWebBundle } from "./src/lib/webBundle.js";
 
@@ -53,11 +53,12 @@ if (webDist) {
   });
 }
 
-// The demo account for testing and the live demo (SEED_DEMO_USER=true; demo@demo.com). Created once, kept after that.
+// The demo account for testing and the live demo (SEED_DEMO_USER=true; demo@demo.com). Reset to the seed at startup,
+// then checked every 5 minutes and reset again if anyone changed it.
 if (config.seedDemoUser) {
   try {
-    const made = await ensureDemoUser({ repos: createRepositories(db, config), config, storage: createFileStorage(config) });
-    logger.info(`Demo user ${made}`);
+    await keepDemoUserAsSeeded({ db, repos: createRepositories(db, config), config, storage: createFileStorage(config), logger });
+    logger.info("Demo user ready");
   } catch (error) {
     logger.error({ err: error }, "Demo user could not be created");
   }

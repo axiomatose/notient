@@ -3,7 +3,7 @@ import request from "supertest";
 import { createTestContext } from "./helpers/testUtils.js";
 import { createRepositories } from "../src/db/index.js";
 import { createFileStorage } from "../src/lib/storage.js";
-import { DEMO_EMAIL, DEMO_PASSWORD, ensureDemoUser } from "../src/lib/seedUser.js";
+import { DEMO_EMAIL, DEMO_PASSWORD, ensureDemoUser, keepDemoUserAsSeeded } from "../src/lib/seedUser.js";
 
 describe("starter content", () => {
   let context;
@@ -72,5 +72,27 @@ describe("starter content", () => {
     const auth = { Authorization: `Bearer ${login.body.token}` };
     const notes = (await agent.get("/notes").set(auth)).body.notes;
     expect(notes.map((n) => n.title)).toContain("Welcome to Notient");
+  });
+
+  it("resets the demo user when its content changes, and leaves it alone otherwise", async () => {
+    const repos = createRepositories(context.db, context.config);
+    const storage = createFileStorage(context.config);
+    const check = await keepDemoUserAsSeeded({ db: context.db, repos, config: context.config, storage, everyMs: 3600_000 });
+    const welcomeId = () => context.db.prepare("SELECT id FROM notes WHERE title = 'Welcome to Notient'").get()?.id;
+
+    const before = welcomeId();
+    await check();
+    expect(welcomeId()).toBe(before); // untouched: no reset
+
+    const user = context.db.prepare("SELECT id FROM users WHERE email = ?").get(DEMO_EMAIL);
+    context.db.prepare("UPDATE notes SET body = 'vandalised' WHERE id = ?").run(before);
+    context.db.prepare("INSERT INTO notes (id, user_id, title, body, created_at, updated_at) VALUES ('x1', ?, 'Spam', '', 1, 1)").run(user.id);
+    await check();
+    expect(welcomeId()).toBeTruthy();
+    expect(welcomeId()).not.toBe(before); // reseeded
+    expect(context.db.prepare("SELECT COUNT(*) AS n FROM notes WHERE title = 'Spam'").get().n).toBe(0);
+    const owner = context.db.prepare("SELECT id FROM users WHERE email = ?").get(DEMO_EMAIL).id;
+    const notes = repos.notes.list({ userId: owner });
+    expect(notes.find((n) => n.title === "Welcome to Notient").bodyMarkdown).toContain("# Welcome to Notient");
   });
 });
