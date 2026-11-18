@@ -568,6 +568,12 @@ const sources: Sources = {
     (store as Store).set('email', b.user.email);
     return { ok: true, error: '' };
   },
+  // Whether this server takes sign-ups, and its demo login when it has one. An old or unreachable server reads as open, no demo.
+  loadAuthOptions: async (_args: [], store): Promise<{ registration: boolean; demoEmail: string; demoPassword: string }> => {
+    const r = await callWith(store, '/auth/options');
+    const b = (r.ok ? r.body : {}) as { registration?: boolean; demo?: { email: string; password: string } | null };
+    return { registration: b.registration !== false, demoEmail: b.demo?.email ?? '', demoPassword: b.demo?.password ?? '' };
+  },
   loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: origin, saved: savedOf(store) }),
   // Blank returns to the build's server. Signing out is the caller's: a token belongs to one server.
   saveServer: ([url], store): Result<'saveServer'> => {

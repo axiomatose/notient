@@ -5,7 +5,7 @@ import rateLimit from "express-rate-limit";
 import { hashPassword, verifyPassword } from "../utils/passwords.js";
 import { HttpError } from "../errors.js";
 import { signAuthToken } from "../utils/jwt.js";
-import { seedNewUser } from "../lib/seedUser.js";
+import { DEMO_EMAIL, DEMO_PASSWORD, seedNewUser } from "../lib/seedUser.js";
 
 // Shared password policy for register and change-password.
 const passwordPolicy = z.string().min(8).max(128);
@@ -73,8 +73,19 @@ export function createAuthRouter({ config, db, repos, requireAuth, storage }) {
     },
   });
 
+  // What the sign-in screen needs before anyone is signed in: whether sign-up is open and, on a demo server, the demo login.
+  router.get("/options", (req, res) => {
+    res.set("Cache-Control", "no-store").json({
+      registration: config.registrationEnabled !== false,
+      demo: config.seedDemoUser ? { email: DEMO_EMAIL, password: DEMO_PASSWORD } : null,
+    });
+  });
+
   router.post("/register", async (req, res, next) => {
     try {
+      if (config.registrationEnabled === false) {
+        throw new HttpError(403, "Registration is closed on this server", "registration_disabled");
+      }
       const input = await registerSchema.parseAsync(req.body ?? {});
       const existingUser = repos.users.findByEmail(input.email);
       if (existingUser) {

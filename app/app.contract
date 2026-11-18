@@ -355,6 +355,11 @@ shape ServerAddress
   fallback: string
   saved: string[]
 
+shape AuthOptions
+  registration: bool
+  demoEmail: string
+  demoPassword: string
+
 shape Prefs
   appearance: string
   boards: string
@@ -866,6 +871,7 @@ component App
   resource profile = loadProfile() as shape Profile else empty()
   resource prefs = loadPrefs() as shape Prefs else empty()
   resource serverAddr = loadServer() as shape ServerAddress else empty()
+  resource authOptions = loadAuthOptions() as shape AuthOptions else empty()
   resource iconHits = lucideSearch(iconQuery) as shape IconNames else empty()
   resource fetchedIcons = lucideIcon(n) for n in iconNames as shape IconPaths
   mutation authReply as shape Reply refreshes session, profile, lib, lists, view, calendars, shared, taskFolders, sharedLists, recentTasks, recentEvents
@@ -875,7 +881,7 @@ component App
   mutation avatarRemoved as shape Reply queue refreshes profile
   mutation passwordChanged as shape Reply
   mutation appearanceSaved as shape Reply
-  mutation serverSaved as shape Reply refreshes serverAddr, session, profile, lib, lists, view, calendars, shared, taskFolders, sharedLists, recentTasks, recentEvents
+  mutation serverSaved as shape Reply refreshes serverAddr, authOptions, session, profile, lib, lists, view, calendars, shared, taskFolders, sharedLists, recentTasks, recentEvents
   mutation calendarSubscribed as shape Reply refreshes calendars, view, recentEvents then afterSubscribe
   mutation caldavFound as shape Discovery
   mutation caldavConnected as shape Reply refreshes calendars, view, recentEvents then afterSubscribe
@@ -1773,7 +1779,7 @@ component App
               if e.name == "notes"
                 if not session.signedIn
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
-                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
+                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else if wide
                   column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" testId="notes-pane"
                     if sideNotes.length == 0
@@ -2019,7 +2025,7 @@ component App
               if e.name == "tasks"
                 if not session.signedIn
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
-                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
+                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else if wide
                   column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" testId="tasks-pane"
                     if not listsSame or lists.lists.length == 0
@@ -2352,7 +2358,7 @@ component App
               if e.name == "calendar"
                 if not session.signedIn
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
-                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
+                    SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else
                   column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column"
@@ -3326,6 +3332,9 @@ component SignIn
     server: string
     fallback: string
     saved: string[]
+    registration: bool
+    demoEmail: string
+    demoPassword: string
     saveServer: action
     serverError: string
     eyePaths: string[]
@@ -3392,8 +3401,14 @@ component SignIn
             text error color="-exact-system-red" testId="auth-error"
           button press=submit disabled=(email.trim() == "" or password == "" or pendingAuth) buttonStyle="filled" testId="submit-auth"
             text (mode == "signin" ? "Sign In" : "Create Account")
-          button press=setMode(mode == "signin" ? "register" : "signin") testId="toggle-auth"
-            text (mode == "signin" ? "Need an account? Register" : "Have an account? Sign In")
+          if registration or mode == "register"
+            button press=setMode(mode == "signin" ? "register" : "signin") testId="toggle-auth"
+              text (mode == "signin" ? "Need an account? Register" : "Have an account? Sign In")
+          if demoEmail != ""
+            column gap=2 padding="8px 0" testId="demo-note"
+              text "Demo server" font="-exact-footnote" color="-exact-label" text-align="center"
+              text `Sign in as ${demoEmail} with the password ${demoPassword}.` font="-exact-footnote" color="-exact-secondary-label" text-align="center"
+              text "The demo account is wiped and reset every 5 minutes, so don't keep anything here." font="-exact-footnote" color="-exact-secondary-label" text-align="center"
       column width="min(21rem, calc(100% - 2rem))" margin="0 auto" gap=8 padding="0 16px 8px"
         button press=toggleServer testId="server-toggle"
           text (server == "" ? "Use your own server" : `Server: ${server}`) font="-exact-footnote" color="-exact-secondary-label"

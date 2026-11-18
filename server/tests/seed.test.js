@@ -95,4 +95,19 @@ describe("starter content", () => {
     const notes = repos.notes.list({ userId: owner });
     expect(notes.find((n) => n.title === "Welcome to Notient").bodyMarkdown).toContain("# Welcome to Notient");
   });
+
+  it("reports sign-up and demo options, and refuses sign-up when it is closed", async () => {
+    let options = (await agent.get("/auth/options")).body;
+    expect(options).toEqual({ registration: true, demo: null });
+
+    context.config.seedDemoUser = true;
+    options = (await agent.get("/auth/options")).body;
+    expect(options.demo).toEqual({ email: DEMO_EMAIL, password: DEMO_PASSWORD });
+
+    context.config.registrationEnabled = false;
+    expect((await agent.get("/auth/options")).body.registration).toBe(false);
+    const res = await agent.post("/auth/register").send({ email: "late@example.com", password: "Passw0rd!23" });
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain("registration_disabled");
+  });
 });

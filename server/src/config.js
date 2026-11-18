@@ -67,6 +67,8 @@ export function loadConfig() {
       process.env.PUBLIC_URL?.trim() || `http://localhost:${resolvedPort}`,
     // Starter notes, lists and events for each new account; the demo account (demo@demo.com) only when asked.
     seedNewUsers: process.env.SEED_NEW_USERS?.trim().toLowerCase() !== "false",
+    // REGISTRATION_ENABLED=false closes sign-up (sign-in still works).
+    registrationEnabled: process.env.REGISTRATION_ENABLED?.trim().toLowerCase() !== "false",
     seedDemoUser: process.env.SEED_DEMO_USER?.trim().toLowerCase() === "true",
     logLevel: process.env.LOG_LEVEL?.trim() || DEFAULTS.logLevel,
     rateLimits: {
