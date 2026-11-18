@@ -43,6 +43,8 @@ const child = Bun.spawn(['node', 'index.js'], {
     PUBLIC_URL: API,
     // One test run makes well over the server's default 1000 requests per IP and window.
     API_RATE_MAX: process.env.API_RATE_MAX ?? '100000',
+    // New accounts get the welcome note, lists and events, except in test and verify (they set DB, and count on an empty account).
+    SEED_NEW_USERS: process.env.SEED_NEW_USERS ?? (process.env.DB ? 'false' : 'true'),
     JWT_SECRET: keys.jwt,
     ENCRYPTION_MASTER_KEY: keys.master,
   },

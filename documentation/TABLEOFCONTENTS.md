@@ -13,6 +13,9 @@
 - **SQLite schema, tables, migrations** → [backend/database.md](backend/database.md)
 - **File storage, avatars, attachments** → [backend/storage.md](backend/storage.md)
 
+## Starter Content
+- **New-account seed (welcome note, lists, events), demo user, seed env flags** → [backend/seed.md](backend/seed.md)
+
 ## Sync & Data
 - **Sync protocol, pull/push, conflicts** → [backend/services/sync.md](backend/services/sync.md)
 - **Version tracking, checkpoints** → [backend/database.md](backend/database.md)

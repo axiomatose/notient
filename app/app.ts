@@ -1,6 +1,6 @@
 // Notient's data module: the repo's Express API (server.ts runs it for test
 // and verify; .env.local's API_BASE_URL points real builds at a deployment).
-import type { Answer, Result, Sources, Storage, StreamEvent } from './app.contract.d.ts';
+import type { Answer, Overlay, Result, Sources, Storage, StreamEvent } from './app.contract.d.ts';
 
 const origin = import.meta.env.API_BASE_URL ?? 'http://127.0.0.1:8787';
 export const API = origin;
@@ -8,6 +8,16 @@ export const API = origin;
 const kept = (store: unknown): string => {
   const v = (store as { get?(k: string): unknown } | undefined)?.get?.('server');
   return typeof v === 'string' ? v : '';
+};
+// Servers typed before (the build's own is not listed): kept as a JSON array beside the current one.
+const savedOf = (store: unknown): string[] => {
+  try {
+    const v = (store as { get?(k: string): unknown } | undefined)?.get?.('servers');
+    const a: unknown = typeof v === 'string' && v !== '' ? JSON.parse(v) : [];
+    return Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 };
 const originOf = (store: unknown): string => kept(store) || origin;
 // The live channel's address: .env.local's SOCKET_URL (ws:// or wss:// with the API's host); build and test use the loopback default.
@@ -29,6 +39,7 @@ export const grants = {
     'net.websocket ws:',
     'net.websocket local-network',
     'secret.keep server',
+    'secret.keep servers',
     'secret.keep token',
     'secret.keep name',
     'secret.keep email',
@@ -47,6 +58,26 @@ export const grants = {
     'net.websocket ws:',
     'net.websocket local-network',
     'secret.keep server',
+    'secret.keep servers',
+    'secret.keep token',
+    'secret.keep name',
+    'secret.keep email',
+    'secret.keep appearance',
+    'secret.keep boards',
+    'fs.read app:/data/notes-cache.json',
+    'fs.write app:/data/notes-cache.json',
+    'fs.read app:/tmp/picked',
+  ],
+  'https://notes.vanceprop.com': [
+    'net.fetch https:',
+    'net.fetch http:',
+    'device.local-network lanPurpose',
+    'net.fetch local-network',
+    'net.websocket wss:',
+    'net.websocket ws:',
+    'net.websocket local-network',
+    'secret.keep server',
+    'secret.keep servers',
     'secret.keep token',
     'secret.keep name',
     'secret.keep email',
@@ -138,7 +169,18 @@ async function request(store: unknown, path: string, init: RequestInit = {}): Pr
     const message = (body as { error?: unknown; message?: unknown });
     const code = typeof message.error === 'string' ? message.error : '';
     if (code === 'invalid_credentials' || code === 'user_not_found' || code === 'invalid_token') return { ok: false, error: 'Wrong email or password.' };
-    if (res.status === 401) return { ok: false, error: 'Sign in again.' };
+    if (res.status === 401) {
+      // The server does not know this login any more (account removed, token expired, database reset): forget it, and the
+      // session read after the next live retry puts the app back on sign-in.
+      if (typeof token === 'string' && token !== '') {
+        const s = store as Store;
+        s.set('token', '');
+        s.set('name', '');
+        s.set('email', '');
+        forgetAnswers();
+      }
+      return { ok: false, error: 'Sign in again.' };
+    }
     if (typeof message.message === 'string' && message.message) return { ok: false, error: message.message };
     return { ok: false, error: friendly(code) };
   } catch (e) {
@@ -526,13 +568,16 @@ const sources: Sources = {
     (store as Store).set('email', b.user.email);
     return { ok: true, error: '' };
   },
-  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: origin }),
+  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: origin, saved: savedOf(store) }),
   // Blank returns to the build's server. Signing out is the caller's: a token belongs to one server.
   saveServer: ([url], store): Result<'saveServer'> => {
     const v = url.trim().replace(/\/+$/, '');
     if (v !== '' && !/^https?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/.test(v)) return { ok: false, error: 'Use an address like https://notes.example.com.' };
     forgetAnswers();
     (store as Store).set('server', v);
+    // A new address is remembered, so it can be picked again from the list.
+    const saved = savedOf(store);
+    if (v !== '' && v !== origin && !saved.includes(v)) (store as Store).set('servers', JSON.stringify([...saved, v]));
     (store as Store).set('token', '');
     (store as Store).set('name', '');
     (store as Store).set('email', '');
@@ -1260,3 +1305,33 @@ export const answer: Answer = (source, args, store, storage, native) =>
   (source as string) === 'exactTime'
     ? (exactTimeSource() as never)
     : sources[source as keyof typeof sources](args as never, store, storage, native) as never;
+
+// A dropped task shows where it landed at once: the server is asked for a fresh list, then for one PATCH, then the board is read
+// again, and over a slow link the card would otherwise snap back until all of that ends. The overlay applies the same move to the
+// task list the screen already has (new section, done state, and the slot before the card it was dropped on).
+export const overlay: Overlay = (source, args, answer, writes) => {
+  if (source !== 'loadTasks') return undefined;
+  const shown = [...(answer as Result<'loadTasks'>).tasks];
+  for (const w of writes) {
+    if (w.source !== 'placeTask') continue;
+    const [listId, taskId, sectionId, before, doneFlag] = w.args as [string, string, string, string, string];
+    if (listId !== (args as [string])[0]) continue;
+    const from = shown.findIndex((t) => t.id === taskId);
+    if (from < 0) continue;
+    const moved = { ...shown[from], sectionId };
+    if (doneFlag === 'done') moved.isDone = true;
+    else if (doneFlag === 'open') moved.isDone = false;
+    shown.splice(from, 1);
+    const at = before === '' ? -1 : shown.findIndex((t) => t.id === before);
+    if (at >= 0) shown.splice(at, 0, moved);
+    else {
+      // Last in its column: after the column's final card, else with the open/done block it belongs to.
+      let end = -1;
+      shown.forEach((t, i) => { if (t.isDone === moved.isDone && t.sectionId === sectionId) end = i; });
+      if (end >= 0) shown.splice(end + 1, 0, moved);
+      else if (moved.isDone) shown.push(moved);
+      else shown.splice(shown.findIndex((t) => t.isDone) < 0 ? shown.length : shown.findIndex((t) => t.isDone), 0, moved);
+    }
+  }
+  return { ...(answer as Result<'loadTasks'>), tasks: shown } as never;
+};

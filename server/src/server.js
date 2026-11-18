@@ -198,7 +198,7 @@ export async function buildApp({ config, db }) {
     res.set("Cache-Control", "no-store").json({ ticket: liveHub.issue(req.auth.userId) });
   });
 
-  app.use("/auth", createAuthRouter({ config, db, repos, requireAuth }));
+  app.use("/auth", createAuthRouter({ config, db, repos, requireAuth, storage }));
   
   app.use(
     "/notes",

@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { hashPassword, verifyPassword } from "../utils/passwords.js";
 import { HttpError } from "../errors.js";
 import { signAuthToken } from "../utils/jwt.js";
+import { seedNewUser } from "../lib/seedUser.js";
 
 // Shared password policy for register and change-password.
 const passwordPolicy = z.string().min(8).max(128);
@@ -52,7 +53,7 @@ function formatUserResponse(record) {
   };
 }
 
-export function createAuthRouter({ config, db, repos, requireAuth }) {
+export function createAuthRouter({ config, db, repos, requireAuth, storage }) {
   const router = Router();
 
   const loginLimiter = rateLimit({
@@ -102,6 +103,15 @@ export function createAuthRouter({ config, db, repos, requireAuth }) {
       });
 
       persistUser(userRecord, deviceRecord);
+
+      // Starter notes, lists and events (SEED_NEW_USERS=false turns this off). A failed seed never fails the sign-up.
+      if (config.seedNewUsers) {
+        try {
+          await seedNewUser({ repos, storage, userId: userRecord.id, deviceId: deviceRecord.id });
+        } catch (error) {
+          req.log?.warn({ err: error }, "Starter content could not be created");
+        }
+      }
 
       const token = signAuthToken(
         { userId: userRecord.id, deviceId: deviceRecord.id },

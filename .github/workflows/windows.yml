@@ -13,7 +13,7 @@ on:
         default: main
       server:
         description: Address the app starts on (people can change it on the sign-in screen)
-        default: https://notient-placeholder.invalid
+        default: https://notes.vanceprop.com
 
 permissions:
   contents: read

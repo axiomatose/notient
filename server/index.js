@@ -7,6 +7,9 @@ import express from "express";
 import { loadConfig } from "./src/config.js";
 import { initializeDatabase } from "./src/db/index.js";
 import { buildApp } from "./src/server.js";
+import { createRepositories } from "./src/db/index.js";
+import { createFileStorage } from "./src/lib/storage.js";
+import { ensureDemoUser } from "./src/lib/seedUser.js";
 import logger from "./src/utils/logger.js";
 import { prepareWebBundle } from "./src/lib/webBundle.js";
 
@@ -48,6 +51,16 @@ if (webDist) {
     }
     res.type("html").set("Cache-Control", "no-cache").send(shell());
   });
+}
+
+// The demo account for testing and the live demo (SEED_DEMO_USER=true; demo@demo.com). Created once, kept after that.
+if (config.seedDemoUser) {
+  try {
+    const made = await ensureDemoUser({ repos: createRepositories(db, config), config, storage: createFileStorage(config) });
+    logger.info(`Demo user ${made}`);
+  } catch (error) {
+    logger.error({ err: error }, "Demo user could not be created");
+  }
 }
 
 const api = await buildApp({ config, db });

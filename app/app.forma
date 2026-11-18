@@ -1,0 +1,5 @@
+forma notient
+
+icons
+  icon.chevron-left = icon(sf "chevron.left", svg "icons/chevron-left.svg")
+  icon.chevron-right = icon(sf "chevron.right", svg "icons/chevron-right.svg")
