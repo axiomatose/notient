@@ -22,7 +22,8 @@ permissions:
 
 jobs:
   mac:
-    runs-on: macos-latest
+    # xcode-27 is GitHub's image with Xcode 27 (Swift 6.4+), which Exact's Apple host needs; the macos-26 images stop at Xcode 26.6.
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
         with:
@@ -78,12 +79,8 @@ jobs:
         working-directory: notient/app
         run: bun ../../exact/scripts/exact.mjs setup
 
-      # Exact's Apple host needs Swift 6.4 or later, newer than the runner's default Xcode: use the newest one installed.
-      - name: Select the newest Xcode
+      - name: Show the toolchain
         run: |
-          ls -d /Applications/Xcode*.app
-          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
-          sudo xcode-select -s "$xcode/Contents/Developer"
           xcodebuild -version
           swift --version
 
