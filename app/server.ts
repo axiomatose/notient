@@ -29,6 +29,7 @@ const secrets = (): { jwt: string; master: string } => {
 };
 const keys = secrets();
 
+const webDist = resolve(dirname(new URL(import.meta.url).pathname), 'target/app-dist');
 const child = Bun.spawn(['node', 'index.js'], {
   cwd: dirname(new URL(import.meta.url).pathname) + '/../server',
   env: {
@@ -37,7 +38,8 @@ const child = Bun.spawn(['node', 'index.js'], {
     // address, or loopback, and the API has to answer on whichever it used.
     HOST: '0.0.0.0',
     PORT: String(Number(port)),
-    WEB_DIST: resolve(dirname(new URL(import.meta.url).pathname), 'target/app-dist'),
+    // The built web client, served from the same origin when one has been built (a fresh checkout, as in CI, has none).
+    ...(existsSync(webDist) ? { WEB_DIST: webDist } : {}),
     DATA_DIR: dirname(db),
     DB_PATH: db,
     PUBLIC_URL: API,
