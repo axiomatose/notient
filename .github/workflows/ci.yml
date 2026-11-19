@@ -1,11 +1,18 @@
-# Runs the API's tests. Manual for now: Actions tab > "CI" > Run workflow.
+# Runs the API's tests and the app's Exact tests (compile check included). Manual for now: Actions tab > "CI" > Run workflow.
 # Once the repository is public (free minutes), add the pull_request trigger below.
 name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      exact_repo:
+        description: Where to fetch Exact from (the app job)
+        default: expo/exact
+      exact_ref:
+        description: Exact branch, tag or commit (the app job)
+        default: main
   # pull_request:
-  #   paths: ["server/**", ".github/workflows/ci.yml"]
+  #   paths: ["server/**", "app/**", ".github/workflows/ci.yml"]
 
 permissions:
   contents: read
@@ -28,3 +35,88 @@ jobs:
       - run: npm install -g npm@11
       - run: npm ci
       - run: npm test
+
+  # The Exact app: compiles app.contract and runs app.test.contract in headless Chrome against server.ts on an empty database.
+  # Needs Exact checked out beside this repo (the app reaches it as ../../exact).
+  app:
+    name: App tests (Exact, web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: notient
+
+      - name: Check out Exact
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.exact_repo || 'expo/exact' }}
+          ref: ${{ inputs.exact_ref || 'main' }}
+          path: exact
+          token: ${{ secrets.EXACT_TOKEN || github.token }}
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # server.ts runs the Express API from ../server, which needs its packages (and Node's npm to install them).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: notient/server/package-lock.json
+      - run: npm install -g npm@11
+      - name: Install the API's packages
+        working-directory: notient/server
+        run: npm ci
+
+      # Exact pins its Rust toolchain in exact/rust-toolchain.toml; rustup reads it on first use.
+      - name: Install Rust
+        working-directory: exact
+        run: rustup show
+
+      - name: Find Exact's revision
+        id: rev
+        run: echo "sha=$(git -C exact rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/exact
+            ~/.cache/ms-playwright
+            notient/app/target
+          key: app-web-${{ steps.rev.outputs.sha }}-${{ hashFiles('notient/app/app.json', 'notient/app/app.contract', 'notient/app/app.ts') }}
+          restore-keys: |
+            app-web-${{ steps.rev.outputs.sha }}-
+            app-web-
+
+      # Installs the pinned Rust targets, wasm tools and Chromium for `test web`.
+      - name: Set up Exact for the web
+        working-directory: notient/app
+        run: bun ../../exact/scripts/exact.mjs setup --platform web
+
+      - name: Install Chromium's system libraries
+        run: bun exact/node_modules/playwright-core/cli.js install-deps chromium
+
+      # The committed app/.env points builds at the live server; tests must talk to the server.ts they start on loopback.
+      - name: Run the app tests
+        working-directory: notient/app
+        env:
+          API_BASE_URL: http://127.0.0.1:8787
+          SOCKET_URL: ws://127.0.0.1:8787
+        run: bun exact.mjs test web
+
+      - name: Save the build cache
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/exact
+            ~/.cache/ms-playwright
+            notient/app/target
+          key: app-web-${{ steps.rev.outputs.sha }}-${{ hashFiles('notient/app/app.json', 'notient/app/app.contract', 'notient/app/app.ts') }}

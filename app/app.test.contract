@@ -1302,7 +1302,10 @@ test "a board card dragged into another column joins that section"
   tap "menu-view-toggle"
   clock settle
   expect text "board-count-none" == "1"
-  tap "Hold and drag Sweep to reorder" drag 252 0
+  tap "Hold and drag Sweep to reorder" contextmenu
+  clock settle
+  tap "grp-section"
+  tap "Move to Outside"
   clock data
   clock settle
   expect text "board-count-none" == "0"
@@ -1394,13 +1397,12 @@ test "a section is renamed by tapping its name and saved on Enter"
   expect state sections.sections.0 .name == "Outside"
   tap "Outside"
   clock settle
-  expect tree has "section-rename-input"
-  type "section-rename-input" "Yard work"
-  type "section-rename-input" key "Enter"
+  expect tree has "section-style-name"
+  type "section-style-name" "Yard work"
+  type "section-style-name" key "Enter"
   clock data
   clock settle
   expect state sections.sections.0 .name == "Yard work"
-  expect tree missing "section-rename-input"
 
 test "an add-task field closes and clears when it loses focus"
   type "email" "blur1@example.com"
@@ -1432,7 +1434,7 @@ test "an add-task field closes and clears when it loses focus"
   tap "section-add-none"
   clock settle
   type "section-add-input" "Stray draft"
-  tap "uncategorized-header"
+  tap "Blurs"
   clock settle
   expect tree missing "section-add-input"
   expect state tasks.tasks.length == 0
@@ -1448,7 +1450,7 @@ test "an add-task field closes and clears when it loses focus"
   tap "list-fab-add-task"
   clock settle
   type "list-quick-title" "Half typed"
-  tap "uncategorized-header"
+  tap "Blurs"
   clock settle
   expect tree missing "list-quick-title"
   expect state tasks.tasks.length == 1
@@ -1651,7 +1653,7 @@ test "a section gets a color"
   clock data
   clock settle
   expect state sections.sections.0 .name == "Walls"
-  tap "Style Walls"
+  tap "Walls"
   clock settle
   tap "pick-color-34c759"
   clock data
@@ -2112,8 +2114,8 @@ test "a new list and a new section open sheets with icon and color, and Uncatego
   expect state sections.sections.0 .color == "#34C759"
   tap "section-name-none"
   clock settle
-  type "section-rename-input" "Inbox"
-  type "section-rename-input" key "Enter"
+  type "section-style-name" "Inbox"
+  type "section-style-name" key "Enter"
   clock data
   clock settle
   expect state lists.lists.0 .uncategorizedName == "Inbox"
@@ -2347,7 +2349,10 @@ test "a card dragged into the Done column finishes it, and finishing a task move
   clock settle
   tap "menu-view-toggle"
   clock settle
-  tap "Hold and drag Pack to reorder" drag 252 0
+  tap "Hold and drag Pack to reorder" contextmenu
+  clock settle
+  tap "grp-section"
+  tap "Move to Done"
   clock data
   clock settle
   expect state tasks.tasks.1 .isDone == true
@@ -2685,10 +2690,118 @@ test "a card moved on the board while its drawer is open keeps its new section w
   tap "Open Sweep"
   clock settle
   expect tree has "drawer"
-  tap "Hold and drag Sweep to reorder" drag 252 0
+  tap "Hold and drag Sweep to reorder" contextmenu
+  clock settle
+  tap "grp-section"
+  tap "Move to Outside"
   clock data
   clock settle
   tap "task-save"
   clock data
   clock settle
   expect text "board-count-none" == "0"
+
+test "a task's right-click menu flags, prioritises, completes and deletes it"
+  type "email" "ctx1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Menus"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Menus"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "Sweep" contextmenu
+  clock settle
+  tap "ctx-flag"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .flagged == true
+  tap "Sweep" contextmenu
+  clock settle
+  tap "grp-prio"
+  tap "ctx-priority-3"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .priority == 3
+  tap "Sweep" contextmenu
+  clock settle
+  tap "ctx-done"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .isDone == true
+  tap "Sweep" contextmenu
+  clock settle
+  tap "ctx-delete"
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 0
+
+test "a list's right-click menu asks before it deletes the list"
+  type "email" "ctx2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Doomed"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Doomed" contextmenu
+  clock settle
+  tap "ctx-list-delete"
+  clock settle
+  tap "ctx-list-delete-cancel"
+  clock settle
+  expect state lists.lists.length == 1
+  tap "Doomed" contextmenu
+  clock settle
+  tap "ctx-list-delete"
+  clock settle
+  tap "ctx-list-delete-confirm"
+  clock data
+  clock settle
+  expect state lists.lists.length == 0
+
+test "a note's right-click menu pins it"
+  type "email" "ctx3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Pin me"
+  type "note-body" "Body text"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "Pin me" contextmenu
+  clock settle
+  tap "ctx-note-pin"
+  clock data
+  clock settle
+  expect state lib.notes.0 .isPinned == true

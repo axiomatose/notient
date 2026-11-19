@@ -489,8 +489,6 @@ fn colorOr(c: string): string = c == "" ? "-exact-label" : c
 fn dotOf(c: string): string = c == "" ? "-exact-system-blue" : c
 fn calOf(calendars: CalendarItem[], id: string): CalendarItem = match first(calendars.filter(c => c.id == id)) { case some(c) => c, case none => CalendarItem(id="", name="", color="", isActive=true, type="internal", syncKind="", syncError="") }
 fn calColor(calendars: CalendarItem[], id: string): string = dotOf(calOf(calendars, id).color)
-// The palette glyph on a section's style button (lucide "palette", ISC).
-fn paletteGlyph(): string[] = ["M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z", "M13 6.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0", "M17 10.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0", "M6 12.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0", "M8 7.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0"]
 fn tintOf(c: string): string = c == "" ? "light-dark(#f2f2f7, #1c1c1e)" : c + "1f"
 fn sectionOf(sections: Section[], id: string): Section = match first(sections.filter(s => s.id == id)) { case some(s) => s, case none => Section(id="", name="", icon="", color="", tasks=[]) }
 fn listOf(lists: TaskList[], id: string): TaskList = match first(lists.filter(l => l.id == id)) { case some(l) => l, case none => TaskList(id="", name="", folderId="", icon="", color="", uncategorizedName="", grocery=false, viewMode="") }
@@ -511,7 +509,7 @@ fn rowsHeight(ts: Task[]): number = ts.length == 0 ? 36 : sum(ts.map(t => rowHei
 fn memberOf(ms: Member[], id: string): Member = match first(ms.filter(m => m.id == id)) { case some(m) => m, case none => Member(id="", role="", name="", email="", icon="", color="") }
 // A board column shows as a sliver (icon, count, the name turned, a plus) when it is empty on a wide screen (unless opened), or on a
 // narrow one whenever it is not the open column. A board with no tasks at all keeps every column open.
-fn colShut(wide: bool, n: number, anyTasks: bool, open: string, col: string, active: string): bool = wide ? (n == 0 and anyTasks and not folded(open, col)) : col != active
+fn colShut(wide: bool, n: number, anyTasks: bool, open: string, shut: string, col: string, active: string): bool = wide ? (folded(shut, col) or (n == 0 and anyTasks and not folded(open, col))) : col != active
 fn folded(csv: string, col: string): bool = (" " + csv + " ").indexOf(" " + col + " ") >= 0
 fn opened(csv: string, key: string, force: bool): bool = force or folded(csv, key)
 fn sharedBodyOf(ns: SharedNote[], id: string): string = match first(ns.filter(x => x.id == id)) { case some(n) => textOf(n.body), case none => "" }
@@ -655,6 +653,8 @@ component App
   state foldedCols = ""
   // Board columns opened by hand (wide: empty ones) and the one open column on a narrow screen ("" = the first with tasks).
   state openedCols = ""
+  // Board columns shut by tapping a header's empty space (wide only); a shut empty column stays shut even when tasks arrive.
+  state shutCols = ""
   state boardActive = ""
   // Wide windows open form sheets (settings, lists, sections, events, calendars, new task) as a bottom drawer: `sheet` names
   // the open one, `sheetArg` its list or event id, `sheetBack` the sheet to return to (calendars: Add over Manage).
@@ -687,6 +687,17 @@ component App
   state aiBusy = false
   state aiNotice = ""
   state sectionRenameDraft = ""
+  state styleNameDraft = ""
+  // The task the right-click / long-press menu was opened on ("" none).
+  state ctxTask = ""
+  state openGroups = ""
+  // The note the right-click / long-press menu was opened on ("" none).
+  state ctxNote = ""
+  // The event, list and calendar a context menu was opened on ("" none).
+  state ctxEvent = ""
+  state ctxList = ""
+  state ctxSection = ""
+  state ctxCal = ""
   state folderDraft = ""
   state iconQuery = ""
   state iconProbe = ""
@@ -753,6 +764,9 @@ component App
   derive newTaskOpen = sheet == "newTask" or stack(nav).filter(e => e.name == "newTask").length > 0
   derive sectionsListId = openList != "" ? openList : newTaskOpen ? newTaskListId : ""
   derive blankTask = Task(id="", title="", isDone=false, notes="", dueAt=0, dueDay="", dueTime="", dueHasTime=false, remindAt=0, flagged=false, recurrence="none", url="", priority=0, tags=[], sectionId="", version=0, sortOrder=0, subtaskCount=0, parentId="", assigneeId="", completedAt=0)
+  derive ctxNoteRow = match first(lib.notes.filter(x => x.id == ctxNote)) { case some(n) => n, case none => Note(id="", title="", body="", isPinned=false, tags=[], folder="", updatedAt=0, deletedAt=0, version=0) }
+  derive ctxCalRow = calOf(calendars.calendars, ctxCal)
+  derive ctxRow = match first(tasks.tasks.filter(x => x.id == ctxTask)) { case some(t) => t, case none => blankTask }
   derive selectedTask = drawerTask != "" ? drawerTask : match stack(nav).filter(e => e.name == "taskDetail").at(-1) { case some(e) => e.params.id, case none => "" }
   derive sectionsSame = sections.owner == session.email and session.email != ""
   derive boardIds = ["none"].concat(sections.sections.map(s => s.id))
@@ -890,6 +904,8 @@ component App
   mutation noteStarted as shape CreatedNote refreshes lib then adoptNote
   mutation noteAutoSaved as shape Reply then markSaved
   mutation noteSaved as shape Reply queue refreshes lib then markSaved
+  mutation notePatched as shape Reply refreshes lib
+  mutation ctxEventDeleted as shape Reply refreshes view, recentEvents
   mutation noteFate as shape Reply refreshes lib
   mutation noteDeleted as shape Reply refreshes lib
   mutation noteImage as shape ImageReply queue then imageInserted
@@ -923,6 +939,9 @@ component App
   mutation taskAssigned as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
   mutation notificationsRead as shape Reply refreshes notifications
   mutation taskToggled as shape Reply refreshes tasks, boardSubtasks, recentTasks
+  mutation taskPatched as shape Reply refreshes tasks, boardSubtasks, recentTasks
+  mutation taskMoved as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
+  mutation ctxDeleted as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
   mutation eventAdded as shape Reply refreshes view, recentEvents then afterEventAdd
   mutation eventSaved as shape Reply queue refreshes view, recentEvents then afterEventSave
   mutation eventDeleted as shape Reply refreshes view, recentEvents then afterEventDelete
@@ -1379,6 +1398,7 @@ component App
     iconProbe = name
   action openSectionStyle(id: string)
     styleSectionId = id
+    styleNameDraft = boardName(sections.sections, noneName, id)
     iconQuery = ""
   action pickSectionIcon(name: string)
     iconProbe = name
@@ -1587,6 +1607,15 @@ component App
     sectionRenaming = ""
   action cancelSectionRename
     sectionRenaming = ""
+  action editStyleName(v: string)
+    styleNameDraft = v
+  action submitStyleName
+    let name = styleNameDraft.trim()
+    if styleSectionId == "none"
+      if name != noneName and not pending(noneRenamed)
+        send noneRenamed = renameUncategorized(openList, name == "Uncategorized" ? "" : name)
+    else if name != "" and name != boardName(sections.sections, noneName, styleSectionId) and not pending(sectionRenamed)
+      send sectionRenamed = renameSection(openList, styleSectionId, name)
   action aiInput(v: string)
     aiValue = v
     if v.startsWith("ai:ready:")
@@ -1617,6 +1646,76 @@ component App
       send boardsSaved = setListView(openList, listView == "list" ? "board" : "list")
   action toggleTask(id: string, done: bool)
     send taskToggled = setTaskDoneIn(id, done, doneSectionId == "" ? "" : done ? doneSectionId : tasks.tasks.filter(x => x.id == id and x.sectionId == doneSectionId).length > 0 ? "-" : "")
+  // Task context menu: contextmenu on a row sets ctxTask, then one popover (`task-menu`) serves every row.
+  action toggleGroup(g: string)
+    if folded(openGroups, g)
+      openGroups = openGroups.split(" ").filter(x => x != g).join(" ")
+    else
+      openGroups = (openGroups + " " + g).trim()
+  action openTaskMenu(id: string)
+    ctxTask = id
+    openGroups = ""
+  action ctxDone
+    toggleTask(ctxTask, not ctxRow.isDone)
+  action ctxFlag
+    send taskPatched = patchTask(ctxTask, not ctxRow.flagged, ctxRow.priority)
+  action ctxPriority(p: number)
+    send taskPatched = patchTask(ctxTask, ctxRow.flagged, p)
+  // Move to another section of the open list ("" = Uncategorized), or to another list (lands in its Uncategorized).
+  action ctxMoveSection(sectionId: string)
+    send taskDropped = placeTask(openList, ctxTask, sectionId, "", doneSectionId == "" ? "" : sectionId == doneSectionId ? "done" : "open")
+  action ctxMoveList(listId: string)
+    send taskMoved = moveTask(ctxTask, listId, "")
+  action ctxAssign(assigneeId: string)
+    send taskAssigned = assignTask(ctxTask, assigneeId)
+  action openNoteMenu(id: string)
+    ctxNote = id
+    openGroups = ""
+  action ctxNotePin
+    send notePatched = patchNote(ctxNote, not ctxNoteRow.isPinned, ctxNoteRow.tags, ctxNoteRow.folder)
+  action ctxNoteVault
+    send notePatched = patchNote(ctxNote, ctxNoteRow.isPinned, ctxNoteRow.tags.includes("vault") ? ctxNoteRow.tags.filter(t => t != "vault") : ctxNoteRow.tags.concat(["vault"]), ctxNoteRow.folder)
+  action ctxNoteFolder(f: string)
+    send notePatched = patchNote(ctxNote, ctxNoteRow.isPinned, ctxNoteRow.tags, f)
+  action ctxNoteTrash
+    send noteFate = trashNote(ctxNote)
+  action openEventMenu(id: string)
+    ctxEvent = id
+  action ctxEventOpen
+    nav = push(nav, path("eventDetail", ctxEvent))
+  action ctxEventDelete
+    send ctxEventDeleted = deleteEvent(ctxEvent)
+  action openListMenu(id: string)
+    ctxList = id
+  action ctxListOpen
+    openSideList(ctxList)
+  action ctxListNewTask
+    openNewTaskIn(ctxList)
+  action ctxListEdit
+    openEditList(ctxList)
+  action ctxListAsk
+    showModal("delete-list-ctx")
+  action ctxListDelete
+    send listDeleted = deleteList(ctxList)
+  action openSectionMenu(id: string)
+    ctxSection = id
+  action ctxSectionFold
+    if listView == "board"
+      toggleShutCol(ctxSection)
+    else
+      toggleFold(ctxSection)
+  action ctxSectionAdd
+    openBoardAdd(ctxSection)
+  action ctxListShare
+    openShareList(ctxList)
+  action openCalMenu(id: string)
+    ctxCal = id
+  action ctxCalToggle
+    toggleCalVisible(ctxCal, not ctxCalRow.isActive)
+  action ctxCalEdit
+    openCalEdit(ctxCal, ctxCalRow.name, ctxCalRow.color)
+  action ctxDelete
+    send ctxDeleted = deleteTask(ctxTask)
   action openNewEvent
     if wide
       openSheet("newEvent", "")
@@ -1655,8 +1754,14 @@ component App
     if wide
       if not folded(openedCols, col)
         openedCols = (openedCols + " " + col).trim()
+      shutCols = shutCols.split(" ").filter(c => c != col).join(" ")
     else
       boardActive = col
+  action toggleShutCol(col: string)
+    if folded(shutCols, col)
+      shutCols = shutCols.split(" ").filter(c => c != col).join(" ")
+    else
+      shutCols = (shutCols + " " + col).trim()
   action openBoardAdd(col: string)
     openBoardCol(col)
     openSectionAdd(col)
@@ -1771,7 +1876,7 @@ component App
     main navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
       if wide and session.signedIn
-        DesktopSidebar(current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openNote=openSideNote, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
+        DesktopSidebar(current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
       column flex=1 min-width=0 min-height=0 position="relative"
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -1795,12 +1900,12 @@ component App
                               text "New Note"
                           row flex-wrap="wrap" gap=12
                             for n in sideNotes.slice(0, 6) key=n.id
-                              button press=openSideNote(n.id) appearance="none" testId=`pane-note-${n.id}` flex="1 1 17rem" max-width="28rem" box-sizing="border-box" padding=16 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)" text-align="start" display="flex" flex-direction="column" gap=6
+                              button press=openSideNote(n.id) appearance="none" testId=`pane-note-${n.id}` flex="1 1 17rem" max-width="28rem" box-sizing="border-box" padding=16 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)" text-align="start" display="flex" flex-direction="column" gap=6 contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                                 text (n.title.trim() == "" ? "Untitled" : n.title) font="-exact-headline" line-clamp=1
                                 text (isVault(n.tags) ? "Vault note" : previewOf(n.body) == "" ? "No text yet." : previewOf(n.body)) font="-exact-subheadline" color="-exact-secondary-label" line-clamp=3
                 else
                   column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
-                    display="flex" flex-direction="column"
+                    display="flex" flex-direction="column" contextPopover="empty-notes-menu"
                     header display="flex" align-items="center" gap=8 padding="8px 16px"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona"
@@ -1861,7 +1966,7 @@ component App
                               header
                                 text folderLabel(f) testId=`folder-${f}`
                               for n in sortedActive.filter(n => inFolder(n, f) and matchesFilter(n, notesQuery, tagFilter)) key=n.id
-                                button press=openNote(n.id) testId=`note-${n.id}`
+                                button press=openNote(n.id) testId=`note-${n.id}` contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                                   column flex=1 min-width=0 gap=2 padding-top=4 padding-bottom=4
                                     text (n.title.trim() == "" ? "Untitled" : n.title) font-weight=600
                                     if isVault(n.tags) or previewOf(n.body) != ""
@@ -1964,7 +2069,7 @@ component App
                             inputmode="email" enterkeyhint="next" testId="share-email" flex=1 min-width=0
                         row gap=8 align-items="center"
                           text "Permission"
-                          select value=sharePermission change=pickSharePermission aria-label="Permission" testId="share-permission" flex=1 min-width=0 appearance="none"
+                          select value=sharePermission change=pickSharePermission aria-label="Permission" testId="share-permission" flex=1 min-width=0
                             option "View" value="view"
                             option "Edit" value="edit"
                         row
@@ -2041,7 +2146,7 @@ component App
                               text "New List"
                           row flex-wrap="wrap" gap=12
                             for l in lists.lists key=l.id
-                              button press=openSideList(l.id) appearance="none" testId=`pane-list-${l.id}` flex="1 1 17rem" max-width="28rem" box-sizing="border-box" padding=16 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)" text-align="start" display="flex" flex-direction="column" gap=6
+                              button press=openSideList(l.id) appearance="none" testId=`pane-list-${l.id}` flex="1 1 17rem" max-width="28rem" box-sizing="border-box" padding=16 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)" text-align="start" display="flex" flex-direction="column" gap=6 contextPopover="list-ctx-menu" contextmenu=openListMenu(l.id)
                                 row gap=8 align-items="center"
                                   if l.icon != ""
                                     LucideIcon(paths=iconPathsOf(l.icon, fetchedIcons), color=l.color, size=20)
@@ -2054,7 +2159,7 @@ component App
                                   text "Nothing open." font="-exact-subheadline" color="-exact-secondary-label"
                 else
                   column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
-                    display="flex" flex-direction="column"
+                    display="flex" flex-direction="column" contextPopover="empty-tasks-menu"
                     header display="flex" align-items="center" gap=8 padding="8px 16px"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona-tasks"
@@ -2086,7 +2191,7 @@ component App
                               header
                                 text (f.id == "" ? "Lists" : f.name) testId=(f.id == "" ? "uncategorized-header" : `folder-header-${f.name}`)
                               for l in lists.lists.filter(x => x.folderId == f.id) key=l.id
-                                link href=path("taskList", l.id) testId=`list-${l.id}`
+                                link href=path("taskList", l.id) testId=`list-${l.id}` contextPopover="list-ctx-menu" contextmenu=openListMenu(l.id)
                                   if l.icon != ""
                                     LucideIcon(paths=iconPathsOf(l.icon, fetchedIcons), color=l.color, size=20)
                                   text l.name flex=1 min-width=0 color=colorOr(l.color)
@@ -2146,8 +2251,74 @@ component App
                         text "Share"
                       button press=openEditList(e.params.id) popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-edit"
                         text "Edit"
+                    column id="task-menu" popover="auto" role="menu" aria-label="Task options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="task-menu"
+                      button press=openTaskDetail(ctxTask) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-open"
+                        text "Open Task"
+                      button press=ctxDone popovertarget="task-menu" popovertargetaction="hide" testId="ctx-done"
+                        text (ctxRow.isDone ? "Mark Not Done" : "Mark Done")
+                      button press=ctxFlag popovertarget="task-menu" popovertargetaction="hide" testId="ctx-flag"
+                        text (ctxRow.flagged ? "Unflag" : "Flag")
+                      hr
+                      column role="group" aria-label="Priority"
+                        button press=toggleGroup("prio") role="menuitem" aria-expanded=folded(openGroups, "prio") aria-label="Priority" testId="grp-prio"
+                          row gap=8 align-items="center" width="100%"
+                            text "Priority" flex=1 min-width=0 text-align="start"
+                            text (ctxRow.priority == 0 ? "None" : ctxRow.priority == 1 ? "Low" : ctxRow.priority == 2 ? "Medium" : "High") color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+                            image (folded(openGroups, "prio") ? "symbol:minus" : "symbol:add")
+                        if folded(openGroups, "prio")
+                          button press=ctxPriority(0) aria-checked=(ctxRow.priority == 0) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-priority-0"
+                            text "None"
+                          button press=ctxPriority(1) aria-checked=(ctxRow.priority == 1) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-priority-1"
+                            text "Low"
+                          button press=ctxPriority(2) aria-checked=(ctxRow.priority == 2) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-priority-2"
+                            text "Medium"
+                          button press=ctxPriority(3) aria-checked=(ctxRow.priority == 3) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-priority-3"
+                            text "High"
+                      hr
+                      if memberList.length > 0
+                        column role="group" aria-label="Assign to"
+                          button press=toggleGroup("assign") role="menuitem" aria-expanded=folded(openGroups, "assign") aria-label="Assign to" testId="grp-assign"
+                            row gap=8 align-items="center" width="100%"
+                              text "Assign to" flex=1 min-width=0 text-align="start"
+                              text (ctxRow.assigneeId == "" ? "Unassigned" : memberList.filter(m => m.id == ctxRow.assigneeId).map(m => m.name).join("")) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+                              image (folded(openGroups, "assign") ? "symbol:minus" : "symbol:add")
+                          if folded(openGroups, "assign")
+                            button press=ctxAssign("") aria-checked=(ctxRow.assigneeId == "") popovertarget="task-menu" popovertargetaction="hide" testId="ctx-assign-none"
+                              text "Unassigned"
+                            for m in memberList.slice(0, 8) key=m.id
+                              button press=ctxAssign(m.id) aria-checked=(ctxRow.assigneeId == m.id) popovertarget="task-menu" popovertargetaction="hide" testId=`ctx-assign-${m.id}`
+                                text `Assign to ${m.name}`
+                      hr
+                      column role="group" aria-label="Move to section"
+                        button press=toggleGroup("section") role="menuitem" aria-expanded=folded(openGroups, "section") aria-label="Move to section" testId="grp-section"
+                          row gap=8 align-items="center" width="100%"
+                            text "Move to section" flex=1 min-width=0 text-align="start"
+                            text (ctxRow.sectionId == "" ? noneName : sections.sections.filter(x => x.id == ctxRow.sectionId).map(x => x.name).join("")) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+                            image (folded(openGroups, "section") ? "symbol:minus" : "symbol:add")
+                        if folded(openGroups, "section")
+                          button press=ctxMoveSection("") aria-checked=(ctxRow.sectionId == "") popovertarget="task-menu" popovertargetaction="hide" testId="ctx-section-none"
+                            text `Move to ${noneName}`
+                          for s in sections.sections key=s.id
+                            button press=ctxMoveSection(s.id) aria-checked=(ctxRow.sectionId == s.id) popovertarget="task-menu" popovertargetaction="hide" testId=`ctx-section-${s.id}`
+                              text `Move to ${s.name}`
+                      hr
+                      if lists.lists.length > 1
+                        column role="group" aria-label="Move to list"
+                          button press=toggleGroup("list") role="menuitem" aria-expanded=folded(openGroups, "list") aria-label="Move to list" testId="grp-list"
+                            row gap=8 align-items="center" width="100%"
+                              text "Move to list" flex=1 min-width=0 text-align="start"
+                              text "" color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+                              image (folded(openGroups, "list") ? "symbol:minus" : "symbol:add")
+                          if folded(openGroups, "list")
+                            for l in lists.lists.filter(x => x.id != openList).slice(0, 8) key=l.id
+                              button press=ctxMoveList(l.id) popovertarget="task-menu" popovertargetaction="hide" testId=`ctx-list-${l.id}`
+                                text `Move to ${l.name}`
+                      hr
+                      button press=ctxDelete popovertarget="task-menu" popovertargetaction="hide" testId="ctx-delete"
+                        text "Delete" color="-exact-system-red"
                     column id="section-style-pop" popover="auto" padding=8 gap=6 width="19rem" box-sizing="border-box" testId="section-style-pop"
                       text boardName(sections.sections, noneName, styleSectionId) font="-exact-headline" role="heading" aria-level=3
+                      input value=styleNameDraft input=editStyleName submit=submitStyleName placeholder="Section name" aria-label="Section name" appearance="none" testId="section-style-name" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="8px 10px"
                       IconColorPicker(icon=styleSection.icon, color=styleSection.color, paths=iconPathsOf(styleSection.icon, fetchedIcons), query=iconQuery, hits=iconHits.names, queryEdit=editIconQuery, onIcon=pickSectionIcon, onColor=pickSectionColor, onNone=clearSectionStyle)
                     if reorderingSections
                       column flex=1 min-height=0 display="flex" flex-direction="column" gap=8 padding="8px 16px" box-sizing="border-box" testId="section-reorder"
@@ -2171,7 +2342,7 @@ component App
                       scroll testId="board" overflow-x="auto" overflow-y="hidden" flex=1 min-height=0
                         row gap=12 padding="12px 12px 88px 12px" height="100%" box-sizing="border-box" align-items="stretch"
                           for col in boardIds key=col
-                            if colShut(wide, colTasks(tasks.tasks, col, doneSectionId, "").length, tasks.tasks.length > 0, openedCols, col, activeBoardCol)
+                            if colShut(wide, colTasks(tasks.tasks, col, doneSectionId, "").length, tasks.tasks.length > 0, openedCols, shutCols, col, activeBoardCol)
                               column testId=`board-col-${col}` flex-shrink=0 width="2.5rem" height="100%" box-sizing="border-box" padding="8px 0" border-radius=12 background-color=tintOf(sectionOf(sections.sections, col).color) display="flex" flex-direction="column" align-items="center" gap=4
                                 button press=openBoardCol(col) appearance="none" aria-label=`Open ${boardName(sections.sections, noneName, col)}` testId=`board-open-${col}` flex-shrink=0 width="100%" display="flex" flex-direction="column" align-items="center" gap=6 padding="2px 0"
                                   if sectionOf(sections.sections, col).icon != ""
@@ -2188,26 +2359,21 @@ component App
                                   image "symbol:add" width=16 height=16
                             else
                               column testId=`board-col-${col}` flex="1 1 17rem" min-width=(wide ? "10.5rem" : "14rem") max-width="25.5rem" height="100%" box-sizing="border-box" padding=8 gap=6 border-radius=12 background-color=tintOf(sectionOf(sections.sections, col).color) display="flex" flex-direction="column"
-                                row gap=8 align-items="baseline" padding="4px 6px" flex-shrink=0
-                                  if sectionRenaming == col
-                                    input value=sectionRenameDraft input=editSectionRename submit=submitSectionRename blur=cancelSectionRename placeholder="Section name" appearance="none"
-                                      aria-label="Section name" autofocus=true testId="section-rename-input" font="-exact-headline" flex=1 min-width=0
-                                  else
-                                    button press=openSectionRename(col, boardName(sections.sections, noneName, col)) testId=`board-col-name-${col}` flex=1 min-width=0 text-align="start"
-                                      row gap=6 align-items="center"
-                                        if sectionOf(sections.sections, col).icon != ""
-                                          LucideIcon(paths=iconPathsOf(sectionOf(sections.sections, col).icon, fetchedIcons), color=sectionOf(sections.sections, col).color, size=20)
-                                        text boardName(sections.sections, noneName, col) font="-exact-headline" color=colorOr(sectionOf(sections.sections, col).color) role="heading" aria-level=3
-                                  if col != "none"
-                                    button press=openSectionStyle(col) popovertarget="section-style-pop" aria-label=`Style ${boardName(sections.sections, noneName, col)}` testId=`board-col-style-${col}` flex-shrink=0 padding=4
-                                      LucideIcon(paths=paletteGlyph(), color="", size=18)
+                                row gap=8 align-items="baseline" padding="4px 6px" flex-shrink=0 contextPopover="section-menu" contextmenu=openSectionMenu(col)
+                                  button press=openSectionStyle(col) popovertarget="section-style-pop" testId=`board-col-name-${col}` flex=1 min-width=0 text-align="start"
+                                    row gap=6 align-items="center"
+                                      if sectionOf(sections.sections, col).icon != ""
+                                        LucideIcon(paths=iconPathsOf(sectionOf(sections.sections, col).icon, fetchedIcons), color=sectionOf(sections.sections, col).color, size=20)
+                                      text boardName(sections.sections, noneName, col) font="-exact-headline" color=colorOr(sectionOf(sections.sections, col).color) role="heading" aria-level=3
+                                  button press=toggleShutCol(col) appearance="none" flex=1 min-width=0 aria-label=(folded(shutCols, col) ? `Open ${boardName(sections.sections, noneName, col)}` : `Collapse ${boardName(sections.sections, noneName, col)}`)
+                                    view flex=1 min-height=28
                                   text `${colTasks(tasks.tasks, col, doneSectionId, "").length}` testId=`board-count-${col}` color="-exact-secondary-label" font="-exact-footnote"
                                 if doneSectionId != "" and col == doneSectionId
                                   input type="search" value=doneQuery input=editDoneQuery placeholder="Search done" aria-label="Search done tasks" testId="done-search" flex-shrink=0 width="100%" box-sizing="border-box" appearance="none"
                                 list id=`board-list-${col}` reorderGroup="board" reorderdrop=dropTask appearance="none" virtualized=true flex=1 min-height=0 width="100%"
                                   for tk in colTasks(tasks.tasks, col, doneSectionId, doneQuery) key=tk.id
                                     column padding-bottom=6 width="100%" box-sizing="border-box"
-                                      row gap=6 align-items="center" padding=10 border-radius=10 background-color="light-dark(#fff, #2c2c2e)" width="100%" box-sizing="border-box" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}`
+                                      row gap=6 align-items="center" padding=10 border-radius=10 background-color="light-dark(#fff, #2c2c2e)" width="100%" box-sizing="border-box" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
                                         view reorderFor=`board-list-${col}` touch-action="none" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` width=28 height=44 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                                           image "symbol:menu" width=16 height=16 color="-exact-secondary-label"
                                         BoardCardBody(tk=tk, todayMs=todayMs, today=today, offset=time.utcOffset, members=memberList, subs=(boardSubtasks.listId == openList ? boardSubtasks.tasks.filter(s => s.parentId == tk.id) : []), toggle=toggleTask, open=openTaskDetail)
@@ -2229,19 +2395,14 @@ component App
                               for col in boardIds key=col
                                 column gap=6
                                   column gap=4 testId=`section-${col}`
-                                    row gap=8 align-items="center" padding="0 4px"
-                                      if sectionRenaming == col
-                                        input value=sectionRenameDraft input=editSectionRename submit=submitSectionRename blur=cancelSectionRename placeholder="Section name" appearance="none"
-                                          aria-label="Section name" autofocus=true testId="section-rename-input" font="-exact-headline" flex=1 min-width=0
-                                      else
-                                        button press=openSectionRename(col, boardName(sections.sections, noneName, col)) testId=`section-name-${col}` flex=1 min-width=0 text-align="start"
-                                          row gap=6 align-items="center"
-                                            if sectionOf(sections.sections, col).icon != ""
-                                              LucideIcon(paths=iconPathsOf(sectionOf(sections.sections, col).icon, fetchedIcons), color=sectionOf(sections.sections, col).color, size=20)
-                                            text boardName(sections.sections, noneName, col) font="-exact-headline" color=colorOr(sectionOf(sections.sections, col).color) role="heading" aria-level=3 testId=(col == "none" ? "uncategorized-header" : `section-title-${col}`)
-                                        if col != "none"
-                                          button press=openSectionStyle(col) popovertarget="section-style-pop" aria-label=`Style ${boardName(sections.sections, noneName, col)}` testId=`section-style-${col}` flex-shrink=0 padding=4
-                                            LucideIcon(paths=paletteGlyph(), color="", size=18)
+                                    row gap=8 align-items="center" padding="0 4px" contextPopover="section-menu" contextmenu=openSectionMenu(col)
+                                      button press=openSectionStyle(col) popovertarget="section-style-pop" testId=`section-name-${col}` flex=1 min-width=0 text-align="start"
+                                        row gap=6 align-items="center"
+                                          if sectionOf(sections.sections, col).icon != ""
+                                            LucideIcon(paths=iconPathsOf(sectionOf(sections.sections, col).icon, fetchedIcons), color=sectionOf(sections.sections, col).color, size=20)
+                                          text boardName(sections.sections, noneName, col) font="-exact-headline" color=colorOr(sectionOf(sections.sections, col).color) role="heading" aria-level=3 testId=(col == "none" ? "uncategorized-header" : `section-title-${col}`)
+                                      button press=toggleFold(col) appearance="none" flex=1 min-width=0 aria-label=(folded(foldedCols, col) ? `Expand ${boardName(sections.sections, noneName, col)}` : `Collapse ${boardName(sections.sections, noneName, col)}`)
+                                        view flex=1 min-height=32
                                       if boardTasks(tasks.tasks, col).length > 1 or folded(foldedCols, col)
                                         button press=toggleFold(col) aria-label=(folded(foldedCols, col) ? `Expand ${boardName(sections.sections, noneName, col)}` : `Collapse ${boardName(sections.sections, noneName, col)}`) testId=`section-fold-${col}` flex-shrink=0 padding=4 appearance="none"
                                           image "symbol:forward-chevron" width=14 height=14 transform=(folded(foldedCols, col) ? "rotate(0deg)" : "rotate(90deg)")
@@ -2251,14 +2412,14 @@ component App
                                     list id=`tasklist-${col}` reorderGroup="tasks" reorderdrop=dropTask appearance="none" virtualized=true height=rowsHeight(boardTasks(tasks.tasks, col)) width="100%"
                                       for tk in boardTasks(tasks.tasks, col) key=tk.id
                                         column height=rowHeight(tk) box-sizing="border-box" width="100%" overflow="hidden"
-                                          row reorderFor=`tasklist-${col}` gap=6 align-items="center" padding="4px 10px" height="100%" box-sizing="border-box" width="100%" aria-label=`Hold and drag ${tk.title} to reorder` testId=`list-grip-${tk.id}`
+                                          row reorderFor=`tasklist-${col}` gap=6 align-items="center" padding="4px 10px" height="100%" box-sizing="border-box" width="100%" aria-label=`Hold and drag ${tk.title} to reorder` testId=`list-grip-${tk.id}` contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
                                             input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}`
                                             view testId=`task-title-${tk.id}` flex=1 min-width=0
                                               TaskLabel(tk=tk, todayMs=todayMs, today=today, offset=time.utcOffset, members=memberList)
                                             button appearance="none" press=openTaskDetail(tk.id) aria-label=`Open ${tk.title}` testId=`task-open-${tk.id}` min-width=44 min-height=44 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                                               image "symbol:info"
                                     for tk in doneTasks(tasks.tasks, col).filter(x => not groceryOn or showCompleted) key=tk.id
-                                      row gap=8 align-items="center" padding="0 4px"
+                                      row gap=8 align-items="center" padding="0 4px" contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
                                         input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}`
                                         button press=openTaskDetail(tk.id) testId=`task-title-${tk.id}` flex=1 min-width=0 text-align="start"
                                           text tk.title color="-exact-secondary-label"
@@ -2340,7 +2501,7 @@ component App
                             inputmode="email" enterkeyhint="next" testId="share-list-email" flex=1 min-width=0
                         row gap=8 align-items="center"
                           text "Permission"
-                          select value=sharePermission change=pickSharePermission aria-label="Permission" testId="share-list-permission" flex=1 min-width=0 appearance="none"
+                          select value=sharePermission change=pickSharePermission aria-label="Permission" testId="share-list-permission" flex=1 min-width=0
                             option "View" value="view"
                             option "Edit" value="edit"
                         row
@@ -2361,7 +2522,7 @@ component App
                     SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else
                   column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
-                    display="flex" flex-direction="column"
+                    display="flex" flex-direction="column" contextPopover="empty-cal-menu"
                     header display="flex" align-items="center" gap=8 padding="8px 16px"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona-calendar"
@@ -2417,7 +2578,7 @@ component App
                           if dayAllDay.length > 0
                             row gap=6 flex-wrap="wrap" padding="0px 16px 8px"
                               for ev in dayAllDay key=ev.id
-                                link href=path("eventDetail", ev.id) testId=`day-allday-${ev.id}` padding="3px 8px" border-radius=6 background-color=tintOf(calOf(calendars.calendars, ev.calendarId).color)
+                                link href=path("eventDetail", ev.id) testId=`day-allday-${ev.id}` padding="3px 8px" border-radius=6 background-color=tintOf(calOf(calendars.calendars, ev.calendarId).color) contextPopover="event-menu" contextmenu=openEventMenu(ev.id)
                                   text ev.title font="-exact-footnote" color="-exact-label"
                           view position="relative" height=1344 margin="0px 16px 24px 0px" testId="day-grid"
                             for h in hours() key=h
@@ -2426,7 +2587,7 @@ component App
                                 view flex=1 height=0.5 background-color="-exact-separator"
                             view position="absolute" left=56 right=0 top=0 height=1344
                               for ev in dayTimed key=ev.id
-                                link href=path("eventDetail", ev.id) testId=`day-event-${ev.id}` position="absolute" top=blockTop(ev) left=laneLeft(ev) width=laneWidth(ev) height=blockHeight(ev) overflow="hidden" border-radius=6 background-color=tintOf(calOf(calendars.calendars, ev.calendarId).color)
+                                link href=path("eventDetail", ev.id) testId=`day-event-${ev.id}` position="absolute" top=blockTop(ev) left=laneLeft(ev) width=laneWidth(ev) height=blockHeight(ev) overflow="hidden" border-radius=6 background-color=tintOf(calOf(calendars.calendars, ev.calendarId).color) contextPopover="event-menu" contextmenu=openEventMenu(ev.id)
                                   view position="absolute" left=0 top=0 bottom=0 width=3 background-color=calColor(calendars.calendars, ev.calendarId)
                                   column padding="3px 6px 2px 8px" gap=0
                                     text ev.title font="-exact-footnote" line-clamp=2
@@ -2440,7 +2601,7 @@ component App
                               row padding="12px 16px 4px"
                                 text c.label font="-exact-headline" color=(c.isToday ? "-exact-system-blue" : "-exact-label")
                               for ev in c.events key=ev.id
-                                AgendaRow(ev=ev, calendars=calendars.calendars)
+                                AgendaRow(ev=ev, calendars=calendars.calendars, openMenu=openEventMenu)
                       else
                         column testId="month-view"
                           view display="grid" grid-template-columns="repeat(7, 1fr)" gap=2 padding="0px 8px"
@@ -2465,7 +2626,7 @@ component App
                             text "No events" color="-exact-secondary-label" font="-exact-footnote" padding="8px 16px" testId="no-events"
                           else
                             for ev in selectedCell.events key=ev.id
-                              AgendaRow(ev=ev, calendars=calendars.calendars)
+                              AgendaRow(ev=ev, calendars=calendars.calendars, openMenu=openEventMenu)
                     button press=openNewEvent aria-label="New Event" testId="fab-add-event" position="absolute" right=20 bottom=20 width=56 height=56 border-radius=28 background-color="AccentColor" color="AccentColorText" display="flex" align-items="center" justify-content="center" box-shadow="0 4px 12px #0000003d"
                       image "symbol:add" width=26 height=26
               if e.name == "privacy"
@@ -2480,7 +2641,7 @@ component App
                   AddCalendar(route=e.id, subscribe=subscribeNow, find=findCaldav, toggle=toggleFound, connect=connectNow, cancel=back, found=discovery, finding=pending(caldavFound), picked=subPicked, subscribing=(pending(calendarSubscribed) or pending(caldavConnected)), subError=subscribeError, findError=(discovery.ok ? "" : discovery.error), connectError=connectError)
               if e.name == "manageCalendars"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="manage-calendars" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
-                  ManageCalendars(route=e.id, calendars=calendars.calendars, editId=calEditId, editName=calEditName, editColor=calEditColor, edit=openCalEdit, rename=editCalName, pickColor=pickCalColor, setVisible=toggleCalVisible, save=saveCalNow, askDelete=askDeleteCal, done=back, addSub=openAddCalendar, syncNow=syncNow, error=calendarSaveError, saving=(pending(calendarSaved)))
+                  ManageCalendars(route=e.id, calendars=calendars.calendars, editId=calEditId, editName=calEditName, editColor=calEditColor, edit=openCalEdit, rename=editCalName, pickColor=pickCalColor, openMenu=openCalMenu, setVisible=toggleCalVisible, save=saveCalNow, askDelete=askDeleteCal, done=back, addSub=openAddCalendar, syncNow=syncNow, error=calendarSaveError, saving=(pending(calendarSaved)))
               if e.name == "eventDetail"
                 if eventsSame
                   for ev in detailEvents.filter(x => x.id == e.params.id) key=`${ev.id}-${ev.startTime}`
@@ -2517,7 +2678,7 @@ component App
             if sheet == "newSection"
               NewSectionSheet(route=0, fetched=fetchedIcons, hits=iconHits.names, query=iconQuery, queryEdit=editIconQuery, probe=probeIcon, save=createSectionNow, cancel=closeSheet, error=sectionError, saving=(pending(sectionAdded)))
             if sheet == "manageCalendars"
-              ManageCalendars(route=0, calendars=calendars.calendars, editId=calEditId, editName=calEditName, editColor=calEditColor, edit=openCalEdit, rename=editCalName, pickColor=pickCalColor, setVisible=toggleCalVisible, save=saveCalNow, askDelete=askDeleteCal, done=closeSheet, addSub=openAddCalendar, syncNow=syncNow, error=calendarSaveError, saving=(pending(calendarSaved)))
+              ManageCalendars(route=0, calendars=calendars.calendars, editId=calEditId, editName=calEditName, editColor=calEditColor, edit=openCalEdit, rename=editCalName, pickColor=pickCalColor, openMenu=openCalMenu, setVisible=toggleCalVisible, save=saveCalNow, askDelete=askDeleteCal, done=closeSheet, addSub=openAddCalendar, syncNow=syncNow, error=calendarSaveError, saving=(pending(calendarSaved)))
             if sheet == "addCalendar"
               AddCalendar(route=0, subscribe=subscribeNow, find=findCaldav, toggle=toggleFound, connect=connectNow, cancel=closeSheet, found=discovery, finding=pending(caldavFound), picked=subPicked, subscribing=(pending(calendarSubscribed) or pending(caldavConnected)), subError=subscribeError, findError=(discovery.ok ? "" : discovery.error), connectError=connectError)
             if sheet == "event"
@@ -2559,6 +2720,73 @@ component App
           text "Oldest"
         button role="menuitem" press=setSort("title") popovertarget="sort-menu" popovertargetaction="hide" testId="sort-title"
           text "Title"
+      column id="list-ctx-menu" popover="auto" role="menu" aria-label="List options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="list-ctx-menu"
+        button press=ctxListOpen popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-open"
+          text "Open List"
+        button press=ctxListNewTask popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-newtask"
+          text "New Task"
+        hr
+        button press=ctxListShare popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-share"
+          text "Share…"
+        button press=ctxListEdit popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-edit"
+          text "Edit…"
+        hr
+        button press=ctxListAsk popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-delete"
+          text "Delete…" color="-exact-system-red"
+      column id="cal-ctx-menu" popover="auto" role="menu" aria-label="Calendar options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="cal-ctx-menu"
+        button press=ctxCalToggle popovertarget="cal-ctx-menu" popovertargetaction="hide" testId="ctx-cal-toggle"
+          text (ctxCalRow.isActive ? "Hide" : "Show")
+        button press=ctxCalEdit popovertarget="cal-ctx-menu" popovertargetaction="hide" testId="ctx-cal-edit"
+          text "Edit…"
+      column id="event-menu" popover="auto" role="menu" aria-label="Event options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="event-menu"
+        button press=ctxEventOpen popovertarget="event-menu" popovertargetaction="hide" testId="ctx-event-open"
+          text "Open Event"
+        hr
+        button press=ctxEventDelete popovertarget="event-menu" popovertargetaction="hide" testId="ctx-event-delete"
+          text "Delete" color="-exact-system-red"
+      column id="section-menu" popover="auto" role="menu" aria-label="Section options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="section-menu"
+        button press=openSectionStyle(ctxSection) popovertarget="section-style-pop" testId="ctx-section-style"
+          text "Name, Icon and Color…"
+        if wide or listView != "board"
+          button press=ctxSectionFold popovertarget="section-menu" popovertargetaction="hide" testId="ctx-section-fold"
+            text (listView == "board" ? (folded(shutCols, ctxSection) ? "Expand" : "Collapse") : (folded(foldedCols, ctxSection) ? "Expand" : "Collapse"))
+        button press=ctxSectionAdd popovertarget="section-menu" popovertargetaction="hide" testId="ctx-section-add"
+          text "Add Task"
+      column id="empty-notes-menu" popover="auto" role="menu" aria-label="Notes" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="empty-notes-menu"
+        button press=openNewNote popovertarget="empty-notes-menu" popovertargetaction="hide" testId="ctx-empty-newnote"
+          text "New Note"
+      column id="empty-tasks-menu" popover="auto" role="menu" aria-label="Tasks" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="empty-tasks-menu"
+        button press=openNewTask popovertarget="empty-tasks-menu" popovertargetaction="hide" testId="ctx-empty-newtask"
+          text "New Task"
+      column id="empty-cal-menu" popover="auto" role="menu" aria-label="Calendar" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="empty-cal-menu"
+        button press=openNewEvent popovertarget="empty-cal-menu" popovertargetaction="hide" testId="ctx-empty-newevent"
+          text "New Event"
+      column id="note-menu" popover="auto" role="menu" aria-label="Note options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="note-menu"
+        button press=openNote(ctxNote) popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-open"
+          text "Open Note"
+        button press=ctxNotePin popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-pin"
+          text (ctxNoteRow.isPinned ? "Unpin" : "Pin")
+        button press=openShare(ctxNote) popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-share"
+          text "Share…"
+        button press=ctxNoteVault popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-vault"
+          text (ctxNoteRow.tags.includes("vault") ? "Remove from Vault" : "Add to Vault")
+        hr
+        if lib.folders.length > 0
+          column role="group" aria-label="Move to folder"
+            button press=toggleGroup("folder") role="menuitem" aria-expanded=folded(openGroups, "folder") aria-label="Move to folder" testId="grp-folder"
+              row gap=8 align-items="center" width="100%"
+                text "Move to folder" flex=1 min-width=0 text-align="start"
+                text (ctxNoteRow.folder == "" ? "None" : ctxNoteRow.folder) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+                image (folded(openGroups, "folder") ? "symbol:minus" : "symbol:add")
+            if folded(openGroups, "folder")
+              button press=ctxNoteFolder("") aria-checked=(ctxNoteRow.folder == "") popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-folder-none"
+                text "No folder"
+              for f in lib.folders.slice(0, 8) key=f
+                button press=ctxNoteFolder(f) aria-checked=(ctxNoteRow.folder == f) popovertarget="note-menu" popovertargetaction="hide" testId=`ctx-note-folder-${f}`
+                  text `Move to ${f}`
+        hr
+        button press=ctxNoteTrash popovertarget="note-menu" popovertargetaction="hide" testId="ctx-note-trash"
+          text "Move to Trash" color="-exact-system-red"
       column id="persona-menu" popover="auto" role="menu" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="persona-menu"
         row gap=10 align-items="center" padding="6px 8px"
           Avatar(size=40, name=shown, icon=avatarIcon, color=avatarColor, photoUrl=avatarUrl, fetched=fetchedIcons, testId="persona-avatar", show=true)
@@ -2624,6 +2852,12 @@ component App
           text "Delete List"
         button commandfor="delete-list" command="close" testId="delete-list-cancel"
           text "Cancel"
+      dialog id="delete-list-ctx" role="alertdialog" aria-label="Delete List?"
+        text "The list and its tasks are removed. This can’t be undone."
+        button press=ctxListDelete destructive=true commandfor="delete-list-ctx" command="close" testId="ctx-list-delete-confirm"
+          text "Delete List"
+        button commandfor="delete-list-ctx" command="close" testId="ctx-list-delete-cancel"
+          text "Cancel"
       dialog id="delete-calendar" role="alertdialog" aria-label="Delete Calendar?"
         text "The calendar and its events are removed. This can’t be undone."
         button press=removeCalNow destructive=true commandfor="delete-calendar" command="close" testId="delete-calendar-confirm"
@@ -2687,7 +2921,7 @@ component EditListSheet
           input value=name input=editName placeholder="Name" aria-label="Name" testId="edit-list-name" flex=1 min-width=0 appearance="none"
         row gap=8 align-items="center"
           text "Folder"
-          select value=folderSel change=pickFolderSel aria-label="Folder" testId="edit-list-folder" flex=1 min-width=0 appearance="none"
+          select value=folderSel change=pickFolderSel aria-label="Folder" testId="edit-list-folder" flex=1 min-width=0
             option "None" value="-"
             for f in folders key=f.id
               option f.name value=f.id
@@ -2985,11 +3219,11 @@ component TaskLabel
       row gap=4 align-items="baseline"
         if tk.assigneeId != ""
           Assignee(name=memberOf(members, tk.assigneeId).name, color=memberOf(members, tk.assigneeId).color, size=18)
+        text tk.title font-weight=600 flex=1 min-width=0 line-clamp=1
         if bangs(tk.priority) != ""
           text bangs(tk.priority) color="-exact-system-orange" font="-exact-headline" flex-shrink=0
         if tk.flagged
           text "⚑" color="-exact-system-orange" flex-shrink=0
-        text tk.title font-weight=600 flex=1 min-width=0 line-clamp=1
       if tk.notes != ""
         text firstLine(tk.notes) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
       if tk.dueAt != 0 or tk.recurrence != "none" or tk.subtaskCount > 0 or tk.tags.length > 0
@@ -3204,7 +3438,7 @@ component TaskEditor
                 if hasDate
                   row gap=8 align-items="center"
                     text "Repeat" flex=1 min-width=0
-                    select value=repeatSel change=pickRepeat aria-label="Repeat" testId="task-repeat" flex=1 min-width=0 appearance="none"
+                    select value=repeatSel change=pickRepeat aria-label="Repeat" testId="task-repeat" flex=1 min-width=0
                       option "Never" value="none"
                       option "Every Day" value="daily"
                       option "Every Weekday" value="weekdays"
@@ -3214,7 +3448,7 @@ component TaskEditor
                 if hasDate
                   row gap=8 align-items="center"
                     text "Reminder" flex=1 min-width=0
-                    select value=reminderSel change=pickReminder aria-label="Reminder" testId="task-reminder" flex=1 min-width=0 appearance="none"
+                    select value=reminderSel change=pickReminder aria-label="Reminder" testId="task-reminder" flex=1 min-width=0
                       option "None" value="none"
                       option "At time of due" value="due"
                       option "1 hour before" value="1h"
@@ -3228,7 +3462,7 @@ component TaskEditor
                   input type="checkbox" switch checked=flagged change=toggleFlag aria-label="Flag" testId="task-flag"
                 row gap=8 align-items="center"
                   text "Priority" flex=1 min-width=0
-                  select value=prioritySel change=pickPriority aria-label="Priority" testId="task-priority" flex=1 min-width=0 appearance="none"
+                  select value=prioritySel change=pickPriority aria-label="Priority" testId="task-priority" flex=1 min-width=0
                     option "None" value="0"
                     option "Low" value="1"
                     option "Medium" value="2"
@@ -3241,19 +3475,19 @@ component TaskEditor
               if not creating and members.length > 1
                 row gap=8 align-items="center"
                   text "Assigned to" flex=1 min-width=0
-                  select value=task.assigneeId change=assign(task.id) aria-label="Assigned to" testId="task-assignee" flex=1 min-width=0 appearance="none"
+                  select value=task.assigneeId change=assign(task.id) aria-label="Assigned to" testId="task-assignee" flex=1 min-width=0
                     option "Nobody" value=""
                     for m in members key=m.id
                       option m.name value=m.id
               row gap=8 align-items="center"
                 text "List" flex=1 min-width=0
-                select value=listSel change=pickList aria-label="List" testId="task-list" flex=1 min-width=0 appearance="none"
+                select value=listSel change=pickList aria-label="List" testId="task-list" flex=1 min-width=0
                   for l in lists key=l.id
                     option l.name value=l.id
               if sameList
                 row gap=8 align-items="center"
                   text "Section" flex=1 min-width=0
-                  select value=sectionSel change=pickSection aria-label="Section" testId="task-section" flex=1 min-width=0 appearance="none"
+                  select value=sectionSel change=pickSection aria-label="Section" testId="task-section" flex=1 min-width=0
                     option "Uncategorized" value=""
                     for s in sections key=s.id
                       option s.name value=s.id
@@ -3278,7 +3512,7 @@ component TaskEditor
                         view press=startSubEdit(s) flex=1 min-width=0 testId=`subtask-title-${s.id}`
                           text s.title
                       if members.length > 1
-                        select value=s.assigneeId change=assign(s.id) aria-label=`Assign ${s.title}` testId=`subtask-assignee-${s.id}` flex-shrink=0 max-width="7rem" appearance="none"
+                        select value=s.assigneeId change=assign(s.id) aria-label=`Assign ${s.title}` testId=`subtask-assignee-${s.id}` flex-shrink=0 max-width="7rem"
                           option "Nobody" value=""
                           for m in members key=m.id
                             option m.name value=m.id
@@ -3756,8 +3990,9 @@ component AgendaRow
   props
     ev: EventRow
     calendars: CalendarItem[]
+    openMenu: action
   view
-    link href=path("eventDetail", ev.id) testId=`event-${ev.id}` display="block"
+    link href=path("eventDetail", ev.id) testId=`event-${ev.id}` display="block" contextPopover="event-menu" contextmenu=openMenu(ev.id)
       row gap=10 align-items="stretch" padding="10px 16px"
         view width=3 border-radius=2 flex-shrink=0 background-color=calColor(calendars, ev.calendarId)
         column flex=1 min-width=0 gap=2
@@ -3798,7 +4033,10 @@ component DesktopSidebar
     avatarColor: string
     fetched: IconPaths[]
     pick: action
+    openListMenu: action
     openNote: action
+    openNoteMenu: action
+    openEventMenu: action
     openTask: action
     openList: action
     addTask: action
@@ -3848,7 +4086,7 @@ component DesktopSidebar
                         text `${notes.filter(n => inFolder(n, f)).length}` font="-exact-footnote" color="-exact-secondary-label"
                     if (not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0)
                       for n in notes.filter(n => inFolder(n, f)) key=n.id
-                        button press=openNote(n.id) appearance="none" testId=`side-note-${n.id}` width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(noteFolders.length > 1 ? 24 : 8) padding-right=8 border-radius=6 display="flex" align-items="center" background-color=(selected == n.id ? "light-dark(#dde4f0, #2e3441)" : "transparent")
+                        button press=openNote(n.id) appearance="none" testId=`side-note-${n.id}` width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(noteFolders.length > 1 ? 24 : 8) padding-right=8 border-radius=6 display="flex" align-items="center" background-color=(selected == n.id ? "light-dark(#dde4f0, #2e3441)" : "transparent") contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                           text (n.title.trim() == "" ? "Untitled" : n.title) font="-exact-footnote" font-weight=600 line-clamp=1 text-align="start"
               if notes.length + noteFolders.length > 9
                 button press=toggleNotesTall testId="side-notes-more" appearance="none" height=24 padding="0 8px 0 46px" display="flex" align-items="center" color="-exact-secondary-label"
@@ -3882,7 +4120,7 @@ component DesktopSidebar
                               image "symbol:forward-chevron" width=10 height=10 transform=(opened(openedRows, `l:${l.id}`, l.id == openListId) ? "rotate(90deg)" : "rotate(0deg)")
                           else
                             view width=20 flex-shrink=0
-                          button press=openList(l.id) testId=`side-list-${l.id}` appearance="none" flex=1 min-width=0 height=28 box-sizing="border-box" padding="0 8px" border-radius=6 display="flex" align-items="center" gap=6
+                          button press=openList(l.id) testId=`side-list-${l.id}` appearance="none" flex=1 min-width=0 height=28 box-sizing="border-box" padding="0 8px" border-radius=6 display="flex" align-items="center" gap=6 contextPopover="list-ctx-menu" contextmenu=openListMenu(l.id)
                             if l.icon != ""
                               LucideIcon(paths=iconPathsOf(l.icon, fetched), color=l.color, size=16)
                             else
@@ -3903,7 +4141,7 @@ component DesktopSidebar
               text "Calendar" font="-exact-headline"
             column padding-left=38
               for ev in events key=ev.id
-                link href=path("eventDetail", ev.id) testId=`side-event-${ev.id}` text-decoration="none" display="flex" align-items="center" gap=6 height=28 box-sizing="border-box" padding="0 8px" border-radius=6
+                link href=path("eventDetail", ev.id) testId=`side-event-${ev.id}` text-decoration="none" display="flex" align-items="center" gap=6 height=28 box-sizing="border-box" padding="0 8px" border-radius=6 contextPopover="event-menu" contextmenu=openEventMenu(ev.id)
                   text ev.dayShort font="-exact-footnote" color="-exact-secondary-label" text-decoration="none" flex-shrink=0
                   text ev.title font="-exact-footnote" color="-exact-secondary-label" text-decoration="none" line-clamp=1 min-width=0
       column id="side-folder-pop" popover="auto" padding=8 gap=4 width="17.5rem" testId="side-folder-pop"
@@ -3960,6 +4198,7 @@ component ManageCalendars
     edit: action
     rename: action
     pickColor: action
+    openMenu: action
     setVisible: action
     save: action
     askDelete: action
@@ -3987,7 +4226,7 @@ component ManageCalendars
               view width=12 height=12 border-radius=6 background-color=dotOf(c.color)
               text c.name flex=1 min-width=0
             else
-              button press=edit(c.id, c.name, c.color) aria-label=c.name testId=`cal-row-${c.id}` flex=1 min-width=0
+              button press=edit(c.id, c.name, c.color) aria-label=c.name testId=`cal-row-${c.id}` flex=1 min-width=0 contextPopover="cal-ctx-menu" contextmenu=openMenu(c.id)
                 row gap=10 align-items="center"
                   view width=12 height=12 border-radius=6 background-color=dotOf(c.color)
                   column flex=1 min-width=0
@@ -4270,7 +4509,7 @@ component EventEditor
       section
         row gap=8 align-items="center"
           text "Repeat" flex=1 min-width=0
-          select value=repeatSel change=pickRepeat aria-label="Repeat" testId="event-repeat" flex=1 min-width=0 appearance="none"
+          select value=repeatSel change=pickRepeat aria-label="Repeat" testId="event-repeat" flex=1 min-width=0
             option "Never" value="none"
             option "Daily" value="daily"
             option "Weekly" value="weekly"
@@ -4279,7 +4518,7 @@ component EventEditor
             option "Yearly" value="yearly"
         row gap=8 align-items="center"
           text "Alert" flex=1 min-width=0
-          select value=alertSel change=pickAlert aria-label="Alert" testId="event-alert" flex=1 min-width=0 appearance="none"
+          select value=alertSel change=pickAlert aria-label="Alert" testId="event-alert" flex=1 min-width=0
             option "None" value="none"
             option "At time" value="0"
             option "5 minutes before" value="5"
@@ -4291,7 +4530,7 @@ component EventEditor
           row gap=8 align-items="center"
             text "Calendar"
             view width=10 height=10 border-radius=5 flex-shrink=0 background-color=calColor(calendars, calNow)
-            select value=calNow change=pickCal aria-label="Calendar" testId="event-calendar" flex=1 min-width=0 appearance="none"
+            select value=calNow change=pickCal aria-label="Calendar" testId="event-calendar" flex=1 min-width=0
               for c in choices key=c.id
                 option c.name value=c.id
         else

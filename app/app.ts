@@ -630,6 +630,9 @@ const sources: Sources = {
       method: 'PATCH',
       body: JSON.stringify({ title, bodyMarkdown: body, isPinned, tags, folder: folder === '' ? null : folder }),
     })),
+  // Pin, tags and folder alone, for the note context menu ("" folder = none).
+  patchNote: async ([id, isPinned, tags, folder], store) =>
+    reply(await callWith(store, `/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ isPinned, tags, folder: folder === '' ? null : folder }) })),
   trashNote: async ([id], store) =>
     reply(await callWith(store, `/notes/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ deletedAt: 1 }) })),
   restoreNote: async ([id], store) =>
@@ -768,6 +771,11 @@ const sources: Sources = {
   },
   setTaskDone: async ([id, done], store) =>
     reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ isDone: done }) })),
+  // Flag and priority alone (0 clears the priority), for the task context menu.
+  patchTask: async ([id, flagged, priority], store) =>
+    reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ flagged, priority: priority === 0 ? null : priority }) })),
+  moveTask: async ([id, listId, sectionId], store) =>
+    reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ listId, sectionId: sectionId === '' ? null : sectionId }) })),
   deleteTask: async ([id], store) =>
     reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ deletedAt: 1 }) })),
   reorderTasks: async ([listId, dragged, before], store): Promise<Result<'reorderTasks'>> => {
