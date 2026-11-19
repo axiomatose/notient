@@ -319,16 +319,19 @@ test "a task carries notes, a due date, priority, tags and subtasks"
   tap "Open Fix the sink"
   clock data
   clock settle
-  type "task-notes" "# Steps"
+  type "task-note-draft" "# Steps"
+  tap "task-note-add"
+  clock data
+  clock settle
+  expect state taskNotes.notes.0 .body == "# Steps"
   tap "task-date-toggle"
   clock settle
   type "task-due" "2026-11-20"
   type "task-priority" "3"
   type "task-tags" "plumbing, weekend"
-  tap "task-save"
+  tap "task-done"
   clock data
   clock settle
-  expect state tasks.tasks.0 .notes == "# Steps"
   expect state tasks.tasks.0 .priority == 3
   expect state tasks.tasks.0 .tags.0 == "plumbing"
   tap "Open Fix the sink"
@@ -1533,7 +1536,7 @@ test "a task's details: flag, url, repeat and time are saved"
   type "task-time" "14:30"
   type "task-repeat" "yearly"
   type "task-reminder" "1d"
-  tap "task-save"
+  tap "task-done"
   clock data
   clock settle
   expect state tasks.tasks.0 .url == "https://travel.example.com/passport"
@@ -1584,7 +1587,7 @@ test "a repeating task advances its due date when checked off"
   clock settle
   type "task-due" "2026-11-20"
   type "task-repeat" "daily"
-  tap "task-save"
+  tap "task-done"
   clock data
   clock settle
   expect state tasks.tasks.0 .recurrence == "daily"
@@ -2151,7 +2154,7 @@ test "a grocery list hides checked items until the list menu reveals them"
   tap "Open Milk"
   clock data
   clock settle
-  expect tree has "task-notes"
+  expect tree has "task-note-draft"
   expect tree missing "task-url"
   expect tree missing "task-flag"
   back
@@ -2409,7 +2412,7 @@ test "on a wide window a task opens as a bottom drawer over its list"
   tap "Open Sweep"
   clock settle
   type "task-title" "Sweep up"
-  tap "task-save"
+  tap "task-done"
   clock data
   clock settle
   expect tree missing "drawer"
@@ -2696,10 +2699,55 @@ test "a card moved on the board while its drawer is open keeps its new section w
   tap "Move to Outside"
   clock data
   clock settle
-  tap "task-save"
+  tap "task-done"
   clock data
   clock settle
   expect text "board-count-none" == "0"
+
+test "a change made on the board shows in the open drawer, and saving the drawer keeps it"
+  size 1280x800
+  type "email" "dnd4@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Fresh"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  tap "Fresh"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Sweep"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  tap "Open Sweep"
+  clock settle
+  expect tree has "drawer"
+  tap "Hold and drag Sweep to reorder" contextmenu
+  clock settle
+  tap "ctx-flag"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .flagged == true
+  expect text "task-flag" == "true"
+  tap "task-done"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .flagged == true
 
 test "a task's right-click menu flags, prioritises, completes and deletes it"
   type "email" "ctx1@example.com"

@@ -5,6 +5,7 @@ import { MIGRATIONS } from "./schema.js";
 import { createTaskNotificationsRepository } from "./taskNotifications.js";
 import { createTaskSharesRepository } from "./taskShares.js";
 import { createTaskAttachmentsRepository } from "./taskAttachments.js";
+import { createTaskNotesRepository } from "./taskNotes.js";
 import { createTaskListSharesRepository } from "./taskListShares.js";
 import { createNoteSharesRepository } from "./noteShares.js";
 import { createShareableLinksRepository } from "./shareableLinks.js";
@@ -157,6 +158,7 @@ export function createRepositories(db, config) {
     taskNotifications: createTaskNotificationsRepository(db),
     taskShares: createTaskSharesRepository(db),
     taskAttachments: createTaskAttachmentsRepository(db),
+    taskNotes: createTaskNotesRepository(db),
     taskListShares: createTaskListSharesRepository(db),
     noteShares: createNoteSharesRepository(db),
     shareableLinks: createShareableLinksRepository(db),

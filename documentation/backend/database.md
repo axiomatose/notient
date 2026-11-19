@@ -246,6 +246,17 @@ created_by TEXT
 FK: task_id → tasks(id) CASCADE, created_by → users(id) CASCADE
 ```
 
+**task_notes** (migration 36; a task's notes are a thread)
+```sql
+id TEXT PRIMARY KEY
+task_id TEXT
+user_id TEXT (author)
+body TEXT
+created_at INTEGER
+FK: task_id → tasks(id) CASCADE
+```
+Migration 36 turns each task's old `tasks.notes` into its first note (`legacy-<taskId>`, by the task's owner). `POST /tasks` with `notes` creates the first note; `PATCH /tasks/:id` `notes` is no longer used by the app.
+
 **push_subscriptions**
 ```sql
 id TEXT PRIMARY KEY

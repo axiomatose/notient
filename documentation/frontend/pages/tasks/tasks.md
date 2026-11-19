@@ -111,7 +111,7 @@ Response: { task }
 
 ```
 PATCH /api/tasks/:id
-Body: { title?, notes?, listId?, sectionId? (null = Uncategorized), parentId?, isDone?, dueAt?, dueHasTime?, remindAt?, flagged?, recurrence?, url? ("" or null clears), priority?, tags?, sortOrder?, deletedAt? }
+Body: { title?, notes? (legacy column; the app uses the notes thread), listId?, sectionId? (null = Uncategorized), parentId?, isDone?, dueAt?, dueHasTime?, remindAt?, flagged?, recurrence?, url? ("" or null clears), priority?, tags?, sortOrder?, deletedAt? }
 Validation: recurrence in none|daily|weekdays|weekly|monthly|yearly (zod, else 400 invalid_body).
 Recurrence advance: see Recurrence Rule below.
 Response: { task }
@@ -267,8 +267,9 @@ interface TasklistFolder {
 - Offline support with queued changes
 
 ### Task Detail Screen (app.contract `TaskEditor`)
-- Explicit Save (`task-save`); one PATCH with every field. Layout: grouped rows.
-- Title `task-title`, notes `task-notes` (+ Markdown toolbar), URL `task-url` (type=url).
+- Existing task: autosave. Each text field PATCHes on blur (`blur=autoSave`), switches and menus on change; one PATCH with every field. A single check `task-done` only dismisses. Fields follow the task (board edits, live updates) until edited in the editor (`touched`), so saving never writes stale values. New task: Cancel `new-task-cancel` + Add `new-task-add`.
+- Title `task-title`, URL `task-url` (type=url). New task: plain notes `task-notes` (+ Markdown toolbar), becomes the first note.
+- Notes (existing task): a thread. `GET/POST /tasks/:id/notes` ({ body }), `DELETE /tasks/:id/notes/:noteId` (author or list owner). Each note shows avatar, author, time (`task-note-<id>`), composer `task-note-draft` + `task-note-add`.
 - Date switch `task-date-toggle` → date `task-due` (type=date, YYYY-MM-DD); Time switch `task-time-toggle` → time `task-time` (type=time, HH:MM; off = all-day, dueHasTime false).
 - Repeat `task-repeat` (Never/Every Day/Every Weekday/Every Week/Every Month/Every Year); Reminder `task-reminder` (none, due, 1h before, 1d before, Custom=keep). Repeat and Reminder show only with a date.
 - Flag switch `task-flag`; priority `task-priority` (0-3); tags `task-tags` (comma separated).

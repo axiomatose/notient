@@ -169,12 +169,16 @@ export async function seedNewUser({ repos, storage, userId, deviceId = null, now
     return id;
   };
   let taskOrder = 0;
-  const addTask = (listId, title, extra = {}) =>
-    repos.tasks.create({
+  const addTask = (listId, title, { notes, ...extra } = {}) => {
+    const task = repos.tasks.create({
       userId,
       deviceId,
       data: { id: nanoid(), listId, title, sortOrder: (taskOrder += 1), createdAt: now, updatedAt: now, ...extra },
     });
+    // A task's notes are a thread: the starter note is its first entry.
+    if (notes) repos.taskNotes.create({ taskId: task.id, userId, body: notes });
+    return task;
+  };
 
   // Getting started: timed tasks, which the calendar shows under "Tasks Due".
   const start = addList({ name: "Getting Started", icon: "rocket", color: "#007AFF", sortOrder: 1 });
@@ -239,6 +243,7 @@ const OWNED = [
   ["task_lists", "user_id = ?"],
   ["task_sections", "user_id = ?"],
   ["tasks", "user_id = ?"],
+  ["task_notes", "user_id = ?"],
   ["tasklist_folders", "user_id = ?"],
   ["calendars", "user_id = ?"],
   ["calendar_events", "calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)"],

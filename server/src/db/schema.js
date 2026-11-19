@@ -610,4 +610,23 @@ export const MIGRATIONS = [
       UPDATE tasks SET completed_at = updated_at WHERE is_done = 1 AND completed_at IS NULL;
     `,
   },
+  {
+    id: 36,
+    name: "add_task_notes",
+    up: `
+      CREATE TABLE IF NOT EXISTS task_notes (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes(task_id, created_at);
+      -- A task's old single notes field becomes the first note in its thread, by the task's owner.
+      INSERT OR IGNORE INTO task_notes (id, task_id, user_id, body, created_at)
+        SELECT 'legacy-' || id, id, user_id, notes, COALESCE(updated_at, created_at)
+        FROM tasks WHERE notes IS NOT NULL AND TRIM(notes) != '';
+    `,
+  },
 ];

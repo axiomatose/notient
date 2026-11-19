@@ -194,6 +194,22 @@ shape ReorderReply
   listId: string
   order: string[]
 
+// One note on a task: its text, who wrote it and when.
+shape TaskNote
+  id: string
+  body: string
+  createdAt: number
+  userId: string
+  name: string
+  email: string
+  icon: string
+  color: string
+
+shape TaskNotes
+  owner: string
+  taskId: string
+  notes: TaskNote[]
+
 shape Subtasks
   owner: string
   parentId: string
@@ -355,6 +371,12 @@ shape ServerAddress
   fallback: string
   saved: string[]
 
+// Where the app is talking and whether that works: state "ok" (answered, and the token is good), "auth" (answered, the token was refused),
+// "down" (no answer), "error" (another answer).
+shape ServerCheck
+  host: string
+  state: string
+
 shape AuthOptions
   registration: bool
   demoEmail: string
@@ -512,6 +534,7 @@ fn memberOf(ms: Member[], id: string): Member = match first(ms.filter(m => m.id 
 fn colShut(wide: bool, n: number, anyTasks: bool, open: string, shut: string, col: string, active: string): bool = wide ? (folded(shut, col) or (n == 0 and anyTasks and not folded(open, col))) : col != active
 fn folded(csv: string, col: string): bool = (" " + csv + " ").indexOf(" " + col + " ") >= 0
 fn opened(csv: string, key: string, force: bool): bool = force or folded(csv, key)
+fn touch(csv: string, key: string): string = folded(csv, key) ? csv : (csv + " " + key).trim()
 fn sharedBodyOf(ns: SharedNote[], id: string): string = match first(ns.filter(x => x.id == id)) { case some(n) => textOf(n.body), case none => "" }
 fn codeTokens(hl: CodeBlock[], text: string): CodeToken[] = match first(hl.filter(h => h.text == text)) { case some(h) => h.tokens, case none => [] }
 fn tokenColor(k: string): string = k == "kw" ? "light-dark(#ad3da4, #fc5fa3)" : k == "str" ? "light-dark(#c41a16, #fc6a5d)" : k == "num" ? "light-dark(#1c00cf, #d0bf69)" : k == "com" ? "light-dark(#6c7986, #7f8c98)" : k == "fn" ? "light-dark(#326d74, #67b7a4)" : k == "type" ? "light-dark(#0b4f79, #5dd8ff)" : "-exact-label"
@@ -838,9 +861,9 @@ component App
   derive sectionFolders = folderFilter == "" ? lib.folders.concat([""]) : [folderFilter]
   derive notesShown = sortedActive.filter(n => matchesFilter(n, notesQuery, tagFilter))
   derive sharedSame = shared.owner == session.email and session.email != ""
-  derive notesError = pending(lib) ? "" : match failure(lib) { case some(f) => "Couldn’t refresh the notes.", case none => "" }
-  derive listsError = pending(lists) ? "" : match failure(lists) { case some(f) => "Couldn’t refresh the lists.", case none => "" }
-  derive tasksError = openList == "" or pending(tasks) ? "" : match failure(tasks) { case some(f) => "Couldn’t refresh the tasks.", case none => "" }
+  derive notesError = pending(lib) ? "" : match failure(lib) { case some(f) => "Couldn’t refresh the notes. (" + f.code + ": " + f.message + ")", case none => "" }
+  derive listsError = pending(lists) ? "" : match failure(lists) { case some(f) => "Couldn’t refresh the lists. (" + f.code + ": " + f.message + ")", case none => "" }
+  derive tasksError = openList == "" or pending(tasks) ? "" : match failure(tasks) { case some(f) => "Couldn’t refresh the tasks. (" + f.code + ": " + f.message + ")", case none => "" }
   derive eventsError = pending(view) ? "" : match failure(view) { case some(f) => "Couldn’t refresh the calendar.", case none => "" }
   derive viewSame = view.owner == session.email and session.email != ""
   derive dayEvents = match cells.at(0) { case some(c) => c.events, case none => [] }
@@ -874,6 +897,7 @@ component App
   resource listShares = loadListShares(shareListId) as shape ListShares else empty()
   resource sharedLists = loadSharedLists() as shape SharedLists else empty()
   resource notifications = loadNotifications() as shape Notifications else empty()
+  resource taskNotes = loadTaskNotes(openTask) as shape TaskNotes else empty()
   resource attachments = loadAttachments(openTask) as shape Attachments else empty()
   resource calendars = loadCalendars() as shape Calendars else empty()
   // The live channel: a ticket for each attempt, then the socket it opens (see documentation/backend/collaboration.md).
@@ -885,6 +909,7 @@ component App
   resource profile = loadProfile() as shape Profile else empty()
   resource prefs = loadPrefs() as shape Prefs else empty()
   resource serverAddr = loadServer() as shape ServerAddress else empty()
+  resource serverCheck = checkServer(session.email, tasksError) when session.signedIn as shape ServerCheck else empty()
   resource authOptions = loadAuthOptions() as shape AuthOptions else empty()
   resource iconHits = lucideSearch(iconQuery) as shape IconNames else empty()
   resource fetchedIcons = lucideIcon(n) for n in iconNames as shape IconPaths
@@ -900,48 +925,50 @@ component App
   mutation caldavFound as shape Discovery
   mutation caldavConnected as shape Reply refreshes calendars, view, recentEvents then afterSubscribe
   mutation calendarSynced as shape Reply refreshes calendars, view, recentEvents
-  mutation boardsSaved as shape Reply refreshes lists
+  mutation boardsSaved as shape Reply queue refreshes lists
   mutation noteStarted as shape CreatedNote refreshes lib then adoptNote
   mutation noteAutoSaved as shape Reply then markSaved
   mutation noteSaved as shape Reply queue refreshes lib then markSaved
-  mutation notePatched as shape Reply refreshes lib
+  mutation notePatched as shape Reply queue refreshes lib
   mutation ctxEventDeleted as shape Reply refreshes view, recentEvents
-  mutation noteFate as shape Reply refreshes lib
-  mutation noteDeleted as shape Reply refreshes lib
+  mutation noteFate as shape Reply queue refreshes lib
+  mutation noteDeleted as shape Reply queue refreshes lib
   mutation noteImage as shape ImageReply queue then imageInserted
   mutation linkCreated as shape LinkReply refreshes links then afterLinkCreate
   mutation linkRevoked as shape Reply refreshes links
   mutation personShared as shape Reply refreshes noteSharesRes
   mutation personUnshared as shape Reply refreshes noteSharesRes
-  mutation taskSaved as shape Reply queue refreshes tasks, subtasks, boardSubtasks, recentTasks then afterTaskSaved
-  mutation taskDeleted as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
-  mutation sectionAdded as shape Reply refreshes sections, tasks then afterSectionAdd
-  mutation subtaskAdded as shape Reply refreshes subtasks, boardSubtasks
-  mutation subtaskDone as shape Reply refreshes subtasks, boardSubtasks
-  mutation subtaskRenamed as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
+  mutation taskSaved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks then afterTaskSaved
+  mutation taskNoteAdded as shape Reply queue refreshes taskNotes
+  mutation taskNoteRemoved as shape Reply queue refreshes taskNotes
+  mutation taskDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
+  mutation sectionAdded as shape Reply queue refreshes sections, tasks then afterSectionAdd
+  mutation subtaskAdded as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks
+  mutation subtaskDone as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks
+  mutation subtaskRenamed as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation taskDropped as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks
   mutation sectionMoved as shape Reply queue refreshes sections, tasks
   mutation folderAdded as shape Reply refreshes taskFolders then afterFolderAdd
-  mutation listSaved as shape Reply refreshes lists then afterListSave
-  mutation listDeleted as shape Reply refreshes lists, recentTasks
+  mutation listSaved as shape Reply queue refreshes lists then afterListSave
+  mutation listDeleted as shape Reply queue refreshes lists, recentTasks
   mutation listSharedR as shape Reply refreshes listShares
   mutation listUnsharedR as shape Reply refreshes listShares
   mutation taskImageR as shape ImageReply refreshes attachments
-  mutation listAdded as shape Reply refreshes lists then afterListAdd
-  mutation noneRenamed as shape Reply refreshes lists then afterNoneRename
-  mutation tasksSorted as shape Reply refreshes tasks, sections, recentTasks
-  mutation sectionTaskAdded as shape Reply refreshes sections, tasks, boardSubtasks, recentTasks then afterSectionTaskAdd
-  mutation sectionRenamed as shape Reply refreshes sections, tasks then afterSectionRename
+  mutation listAdded as shape Reply queue refreshes lists then afterListAdd
+  mutation noneRenamed as shape Reply queue refreshes lists then afterNoneRename
+  mutation tasksSorted as shape Reply queue refreshes tasks, sections, recentTasks
+  mutation sectionTaskAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks then afterSectionTaskAdd
+  mutation sectionRenamed as shape Reply queue refreshes sections, tasks then afterSectionRename
   mutation sectionStyled as shape Reply queue refreshes sections
-  mutation listQuickAdded as shape Reply refreshes sections, tasks, boardSubtasks, recentTasks then afterListQuickAdd
-  mutation newTaskAdded as shape Reply refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterNewTaskAdd
-  mutation taskReordered as shape ReorderReply refreshes tasks, boardSubtasks, recentTasks
-  mutation taskAssigned as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
+  mutation listQuickAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks then afterListQuickAdd
+  mutation newTaskAdded as shape Reply queue refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterNewTaskAdd
+  mutation taskReordered as shape ReorderReply refreshes tasks, sections, boardSubtasks, recentTasks
+  mutation taskAssigned as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation notificationsRead as shape Reply refreshes notifications
-  mutation taskToggled as shape Reply refreshes tasks, boardSubtasks, recentTasks
-  mutation taskPatched as shape Reply refreshes tasks, boardSubtasks, recentTasks
-  mutation taskMoved as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
-  mutation ctxDeleted as shape Reply refreshes tasks, subtasks, boardSubtasks, recentTasks
+  mutation taskToggled as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks
+  mutation taskPatched as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks
+  mutation taskMoved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
+  mutation ctxDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation eventAdded as shape Reply refreshes view, recentEvents then afterEventAdd
   mutation eventSaved as shape Reply queue refreshes view, recentEvents then afterEventSave
   mutation eventDeleted as shape Reply refreshes view, recentEvents then afterEventDelete
@@ -1458,11 +1485,13 @@ component App
     if newTaskError == "" and top(nav).name == "newTask"
       nav = back(nav)
   action saveTask(id: string, title: string, notes: string, url: string, dueDay: string, dueTime: string, reminder: string, recurrence: string, flagged: bool, priority: number, tags: string[], listId: string, sectionId: string)
-    if title.trim() != "" and not pending(taskSaved)
+    if title.trim() != ""
       send taskSaved = updateTask(id, title.trim(), notes, url, dueDay, dueTime, reminder, recurrence, flagged, priority, tags, listId, sectionId)
       // The task moved to another list: it no longer belongs to this list's screen.
       if listId != openList and top(nav).name == "taskDetail"
         nav = back(nav)
+      if listId != openList
+        drawerTask = ""
   // The sheet's Save saves and closes it (the image picker saves too, but keeps the sheet).
   state closeTaskOnSave = false
   action saveTaskClose(id: string, title: string, notes: string, url: string, dueDay: string, dueTime: string, reminder: string, recurrence: string, flagged: bool, priority: number, tags: string[], listId: string, sectionId: string)
@@ -1487,8 +1516,7 @@ component App
     if draft.trim() != "" and not pending(subtaskAdded)
       send subtaskAdded = createSubtask(listId, parentId, draft.trim())
   action assignTaskNow(id: string, assigneeId: string)
-    if not pending(taskAssigned)
-      send taskAssigned = assignTask(id, assigneeId)
+    send taskAssigned = assignTask(id, assigneeId)
   action toggleSubtask(id: string, done: bool)
     send subtaskDone = setTaskDone(id, done)
   // A subtask's rename PATCHes the same task fields the editor saves; listId is the parent's list.
@@ -1499,6 +1527,11 @@ component App
     send taskDeleted = deleteTask(id)
   action reorderTasksNow(dragged: string, before: string)
     send taskReordered = reorderTasks(openList, dragged, before)
+  action postTaskNote(taskId: string, body: string)
+    if body.trim() != ""
+      send taskNoteAdded = addTaskNote(taskId, body.trim())
+  action dropTaskNote(taskId: string, noteId: string)
+    send taskNoteRemoved = removeTaskNote(taskId, noteId)
   action addTaskImage(taskId: string, name: string, path: string, mime: string)
     send taskImageR = uploadTaskImage(taskId, name, path, mime)
   action dropTask(key: string, before: option<string>, e: ReorderEvent)
@@ -1876,7 +1909,7 @@ component App
     main navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
       if wide and session.signedIn
-        DesktopSidebar(current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
+        DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
       column flex=1 min-width=0 min-height=0 position="relative"
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -2444,7 +2477,7 @@ component App
                         column position="absolute" left=0 right=0 bottom=0 margin="0 auto" width="min(80rem, calc(100% - 2rem))" height="min(80%, 60rem)" display="flex" flex-direction="column" background-color="light-dark(#ffffff, #2c2c2e)" border="1px solid light-dark(#0000001f, #ffffff2e)" border-radius="14px 14px 0 0" box-shadow="0 -6px 24px #0000003d" overflow="hidden" testId="drawer"
                           button appearance="none" press=closeDrawer aria-label="Collapse" testId="drawer-grabber" width="100%" height=18 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                             view width=36 height=5 border-radius=3 background-color="light-dark(#c7c7cc, #48484a)"
-                          TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=true, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=closeDrawer, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today)
+                          TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=true, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=closeDrawer, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today, noteRows=(taskNotes.taskId == tk.id ? taskNotes.notes : []), me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
                 else if pending(tasks) and openList == e.params.id
                   column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
@@ -2473,7 +2506,7 @@ component App
                 if tasks.owner == session.email
                   for tk in tasks.tasks.filter(x => x.id == e.params.id) key=`${tk.id}`
                     column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="task-edit" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
-                      TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=false, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today)
+                      TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=false, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today, noteRows=(taskNotes.taskId == tk.id ? taskNotes.notes : []), me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
                 else if pending(tasks)
                   column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
@@ -2661,7 +2694,7 @@ component App
                   EventEditor(route=e.id, ev=blankEvent, creating=true, initialDay=activeDay, today=today, nowMs=todayMs, offset=time.utcOffset, calendars=calendars.calendars, save=saveEvent, remove=askDeleteEvent, cancel=back, error=eventError, saving=(pending(eventAdded)))
               if e.name == "newTask"
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="new-task" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
-                  TaskEditor(route=e.id, task=blankTask, creating=true, listId=newTaskListId, lists=lists.lists, sections=sections.sections, members=[], assign=assignTaskNow, saveClose=createNewTask, wide=wide, drawer=false, zoom=openLightbox, subs=[], images=[], save=createNewTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=newTaskError, saving=(pending(newTaskAdded)), offset=time.utcOffset, today=today)
+                  TaskEditor(route=e.id, task=blankTask, creating=true, listId=newTaskListId, lists=lists.lists, sections=sections.sections, members=[], assign=assignTaskNow, saveClose=createNewTask, wide=wide, drawer=false, zoom=openLightbox, subs=[], images=[], save=createNewTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=newTaskError, saving=(pending(newTaskAdded)), offset=time.utcOffset, today=today, noteRows=[], me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
       if wide and session.signedIn and sheet != ""
         column position="absolute" top=0 bottom=0 left="21rem" right=0 testId="sheet-layer"
           button appearance="none" press=closeSheet aria-label="Close" testId="sheet-scrim" position="absolute" inset=0 width="100%" height="100%" background-color="#00000040"
@@ -2687,7 +2720,7 @@ component App
             if sheet == "newEvent"
               EventEditor(route=0, ev=blankEvent, creating=true, initialDay=activeDay, today=today, nowMs=todayMs, offset=time.utcOffset, calendars=calendars.calendars, save=saveEvent, remove=askDeleteEvent, cancel=closeSheet, error=eventError, saving=(pending(eventAdded)))
             if sheet == "newTask"
-              TaskEditor(route=0, task=blankTask, creating=true, listId=newTaskListId, lists=lists.lists, sections=sections.sections, members=[], assign=assignTaskNow, saveClose=createNewTask, wide=wide, drawer=false, zoom=openLightbox, subs=[], images=[], save=createNewTask, trash=askDeleteTask, cancel=closeSheet, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=newTaskError, saving=(pending(newTaskAdded)), offset=time.utcOffset, today=today)
+              TaskEditor(route=0, task=blankTask, creating=true, listId=newTaskListId, lists=lists.lists, sections=sections.sections, members=[], assign=assignTaskNow, saveClose=createNewTask, wide=wide, drawer=false, zoom=openLightbox, subs=[], images=[], save=createNewTask, trash=askDeleteTask, cancel=closeSheet, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=newTaskError, saving=(pending(newTaskAdded)), offset=time.utcOffset, today=today, noteRows=[], me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
       row role="tablist" testId="tabs" display=(wide ? "none" : "flex") padding-bottom="calc(env(safe-area-inset-bottom) + 6px)"
         button role="tab" aria-controls="panel-notes" aria-selected=(nav.tab == "notes") press=pick("notes")
           testId="tab-notes" flex=1
@@ -2793,6 +2826,7 @@ component App
           column flex=1 min-width=0 gap=0
             text shown font="-exact-headline" line-clamp=1 testId="persona-name"
             text session.email color="-exact-secondary-label" font="-exact-footnote" line-clamp=1 testId="persona-email"
+            ServerLine(host=serverCheck.host, state=serverCheck.state)
         button role="menuitem" press=openSettings popovertarget="persona-menu" popovertargetaction="hide" testId="menu-settings"
           text "Settings"
         button role="menuitem" press=doSignOut popovertarget="persona-menu" popovertargetaction="hide" testId="sign-out"
@@ -3267,26 +3301,51 @@ component TaskEditor
     saving: bool
     offset: number
     today: string
+    noteRows: TaskNote[]
+    me: string
+    todayMs: number
+    fetched: IconPaths[]
+    postNote: action
+    dropNote: action
   // The toolbar's collapsed-code hook is the note editor's; here it is never called.
   action noCode
-    notes = notes
+    touched = touched
   action noExtra(v: string)
-    notes = notes
-  state title = task.title
-  state notes = task.notes
-  state url = task.url
-  state dueDate = task.dueDay
-  state timeText = task.dueTime
-  state reminderSel = reminderOf(task)
-  state repeatSel = task.recurrence
-  state flagged = task.flagged
-  state prioritySel = `${task.priority}`
-  state tagsText = task.tags.join(", ")
+    touched = touched
+  // A field follows the task (changed on the board, by someone else, or by a menu) until the person edits it here: the drawer
+  // never saves a stale copy over what the board changed.
+  state touched = ""
+  state titleV = task.title
+  derive title = folded(touched, "title") ? titleV : task.title
+  state notesV = task.notes
+  derive notes = folded(touched, "notes") ? notesV : task.notes
+  state urlV = task.url
+  derive url = folded(touched, "url") ? urlV : task.url
+  state dueDateV = task.dueDay
+  derive dueDate = folded(touched, "dueDate") ? dueDateV : task.dueDay
+  state timeTextV = task.dueTime
+  derive timeText = folded(touched, "timeText") ? timeTextV : task.dueTime
+  state reminderSelV = reminderOf(task)
+  derive reminderSel = folded(touched, "reminderSel") ? reminderSelV : reminderOf(task)
+  state repeatSelV = task.recurrence
+  derive repeatSel = folded(touched, "repeatSel") ? repeatSelV : task.recurrence
+  state flaggedV = task.flagged
+  derive flagged = folded(touched, "flagged") ? flaggedV : task.flagged
+  state prioritySelV = `${task.priority}`
+  derive prioritySel = folded(touched, "prioritySel") ? prioritySelV : `${task.priority}`
+  state tagsTextV = task.tags.join(", ")
+  derive tagsText = folded(touched, "tagsText") ? tagsTextV : task.tags.join(", ")
   state listSel = listId
   // The section follows the task (a card dragged on the board while this is open) until the person picks one here.
   state sectionPicked = false
   state sectionChosen = ""
   derive sectionSel = sectionPicked ? sectionChosen : task.sectionId
+  state noteDraft = ""
+  action editNoteDraft(v: string)
+    noteDraft = v
+  action submitNote
+    postNote(task.id, noteDraft)
+    noteDraft = ""
   state subtaskDraft = ""
   state editingSub = ""
   state subEditDraft = ""
@@ -3298,37 +3357,65 @@ component TaskEditor
   derive openSubtasks = subs.filter(s => not s.isDone)
   derive doneSubtasks = subs.filter(s => s.isDone)
   action editTitle(v: string)
-    title = v
+    titleV = v
+    touched = touch(touched, "title")
   action editNotes(v: string)
-    notes = v
+    notesV = v
+    touched = touch(touched, "notes")
   action editUrl(v: string)
-    url = v
+    urlV = v
+    touched = touch(touched, "url")
   action toggleDate(on: bool)
-    dueDate = on ? today : ""
-    timeText = ""
+    dueDateV = on ? today : ""
+    timeTextV = ""
+    touched = touch(touch(touched, "dueDate"), "timeText")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, (on ? today : ""), "", reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action editDue(v: string)
-    dueDate = v
+    dueDateV = v
+    touched = touch(touched, "dueDate")
   action toggleTime(on: bool)
-    timeText = on ? "09:00" : ""
+    timeTextV = on ? "09:00" : ""
+    touched = touch(touched, "timeText")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, (on ? "09:00" : ""), reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action editTime(v: string)
-    timeText = v
+    timeTextV = v
+    touched = touch(touched, "timeText")
   action pickRepeat(v: string)
-    repeatSel = v
+    repeatSelV = v
+    touched = touch(touched, "repeatSel")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, v, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action pickReminder(v: string)
-    reminderSel = v
+    reminderSelV = v
+    touched = touch(touched, "reminderSel")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, v, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action toggleFlag(on: bool)
-    flagged = on
+    flaggedV = on
+    touched = touch(touched, "flagged")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, on, parsedPriority, parsedTags, listSel, sectionSel)
   action pickPriority(v: string)
-    prioritySel = v
+    prioritySelV = v
+    touched = touch(touched, "prioritySel")
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, match parseNumber(v) { case some(n) => n, case none => 0 }, parsedTags, listSel, sectionSel)
   action editTags(v: string)
-    tagsText = v
+    tagsTextV = v
+    touched = touch(touched, "tagsText")
   action pickList(v: string)
     listSel = v
     sectionPicked = true
     sectionChosen = ""
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, parsedPriority, parsedTags, v, "")
   action pickSection(v: string)
     sectionPicked = true
     sectionChosen = v
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, v)
   action editSubtaskDraft(v: string)
     subtaskDraft = v
   action submitSubtask
@@ -3378,6 +3465,10 @@ component TaskEditor
       blur("task-notes")
     else
       format("task-notes", name)
+  // An existing task saves a field when it is left (and a switch or menu when it changes); a new task waits for Add.
+  action autoSave
+    if not creating and title.trim() != ""
+      save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action doSave
     saveClose(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
   action pickImage
@@ -3388,37 +3479,64 @@ component TaskEditor
         save(task.id, title, notes, url, dueDate, timeText, reminderSel, repeatSel, flagged, parsedPriority, parsedTags, listSel, sectionSel)
         addImage(task.id, f.name, f.path, f.type)
       case none
-        title = title
+        touched = touched
   derive simple = listOf(lists, listSel).grocery
   // The drawer lays the form out in two columns (two lists side by side); the sheet keeps one.
   derive cols = drawer ? ["left", "right"] : ["all"]
   view
     header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
-      button id="back" press=cancel aria-label="Cancel" testId=(creating ? "new-task-cancel" : "task-cancel")
-        image "symbol:close"
+      if creating
+        button id="back" press=cancel aria-label="Cancel" testId="new-task-cancel"
+          image "symbol:close"
       text (simple ? (creating ? "New Item" : "Item") : creating ? "New Reminder" : "Task") role="heading" aria-level=2 flex="1 1 6rem"
-      button press=doSave disabled=(title.trim() == "" or saving) buttonStyle="bordered-prominent"
-        aria-label=(creating ? "Add" : "Save") testId=(creating ? "new-task-add" : "task-save")
-        image "symbol:checkmark"
+      if creating
+        button press=doSave disabled=(title.trim() == "" or saving) buttonStyle="bordered-prominent"
+          aria-label="Add" testId="new-task-add"
+          image "symbol:checkmark"
+      else
+        // An existing task saves each field as it is left; the check only puts the editor away.
+        button id="back" press=cancel buttonStyle="bordered-prominent" aria-label="Done" testId="task-done"
+          image "symbol:checkmark"
     row flex=1 min-height=0 width="100%" gap=8
       for col in cols key=col
         list id=(col == "all" ? "task-edit" : `task-edit-${col}`) appearance="auto" listStyle="inset-grouped" flex=1 min-width=0 min-height=0
           if col != "right"
             section
               row
-                input value=title input=editTitle placeholder="Title" aria-label="Title" testId="task-title" flex=1 min-width=0 appearance="none"
+                input value=title input=editTitle placeholder="Title" aria-label="Title" blur=autoSave testId="task-title" flex=1 min-width=0 appearance="none"
                 input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="task-notes-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none"
-              row press=focusNotes width="100%" min-width=0 max-width="100%"
-                textarea id="task-notes" value=notes input=editNotes placeholder="Notes" aria-label="Notes"
-                  hatch="formatbar" data-role="editor" data-images="0" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink
-                  markup="markdown" rows=6 testId="task-notes" flex=1 min-width=0 width="100%" max-width="100%" white-space="pre-wrap" overflow-wrap="anywhere" outline="none" field-sizing="content" overflow-y="hidden" min-height=(drawer ? "5rem" : "8rem") padding="8px 0" select=selectedFmt
-              row display=(nativeBar ? "none" : "flex") padding-top=8 padding-bottom=8
-                MarkdownToolbar(editor="task-notes", prefix="tfmt", formats=fmtFormats, unavailable=fmtUnavailable, link=fmtLink, imageInput="", collapsed=false, codeHere=noCode, extras=false, extra=noExtra, imageLine=false, imageHref="", imageLink=noExtra)
+              if creating
+                row press=focusNotes width="100%" min-width=0 max-width="100%"
+                  textarea id="task-notes" value=notes input=editNotes blur=autoSave placeholder="Notes" aria-label="Notes"
+                    hatch="formatbar" data-role="editor" data-images="0" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink
+                    markup="markdown" rows=6 testId="task-notes" flex=1 min-width=0 width="100%" max-width="100%" white-space="pre-wrap" overflow-wrap="anywhere" outline="none" field-sizing="content" overflow-y="hidden" min-height=(drawer ? "5rem" : "8rem") padding="8px 0" select=selectedFmt
+                row display=(nativeBar ? "none" : "flex") padding-top=8 padding-bottom=8
+                  MarkdownToolbar(editor="task-notes", prefix="tfmt", formats=fmtFormats, unavailable=fmtUnavailable, link=fmtLink, imageInput="", collapsed=false, codeHere=noCode, extras=false, extra=noExtra, imageLine=false, imageHref="", imageLink=noExtra)
+          if col != "right"
+            if not creating
+              section
+                header
+                  text "Notes" testId="task-notes-header"
+                for n in noteRows key=n.id
+                  row gap=10 align-items="flex-start" testId=`task-note-${n.id}`
+                    Avatar(size=28, name=n.name, icon=n.icon, color=n.color, photoUrl="", fetched=fetched, testId=`task-note-avatar-${n.id}`, show=true)
+                    column flex=1 min-width=0 gap=2
+                      row gap=6 align-items="baseline"
+                        text (n.name == "" ? "You" : n.name) font="-exact-subheadline" line-clamp=1 testId=`task-note-author-${n.id}`
+                        text (n.createdAt == 0 ? "Now" : formatDay(n.createdAt, todayMs, offset, "list")) color="-exact-secondary-label" font="-exact-footnote" flex-shrink=0 testId=`task-note-time-${n.id}`
+                      text n.body white-space="pre-wrap" overflow-wrap="anywhere" testId=`task-note-body-${n.id}`
+                    if n.name == "" or n.email == me
+                      button press=dropNote(task.id, n.id) appearance="none" aria-label="Delete note" testId=`task-note-delete-${n.id}`
+                        image "symbol:delete"
+                row gap=8 align-items="flex-end"
+                  textarea value=noteDraft input=editNoteDraft placeholder="Add a note" aria-label="New note" rows=2 testId="task-note-draft" flex=1 min-width=0 white-space="pre-wrap" overflow-wrap="anywhere" outline="none" field-sizing="content" overflow-y="hidden" padding="8px 0"
+                  button press=submitNote disabled=(noteDraft.trim() == "") testId="task-note-add"
+                    text "Add"
           if col != "right"
             if not simple
               section
                 row
-                  input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" testId="task-url" flex=1 min-width=0 appearance="none"
+                  input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" blur=autoSave testId="task-url" flex=1 min-width=0 appearance="none"
           if col != "right"
             if not simple
               section
@@ -3427,14 +3545,14 @@ component TaskEditor
                   input type="checkbox" switch checked=hasDate change=toggleDate aria-label="Date" testId="task-date-toggle"
                 if hasDate
                   row
-                    input type="date" value=dueDate input=editDue aria-label="Due date" testId="task-due" flex=1 min-width=0
+                    input type="date" value=dueDate input=editDue aria-label="Due date" blur=autoSave testId="task-due" flex=1 min-width=0
                 if hasDate
                   row gap=8 align-items="center"
                     text "Time" flex=1 min-width=0
                     input type="checkbox" switch checked=hasTime change=toggleTime aria-label="Time" testId="task-time-toggle"
                 if hasTime
                   row
-                    input type="time" value=timeText input=editTime aria-label="Time of day" testId="task-time" flex=1 min-width=0
+                    input type="time" value=timeText input=editTime aria-label="Time of day" blur=autoSave testId="task-time" flex=1 min-width=0
                 if hasDate
                   row gap=8 align-items="center"
                     text "Repeat" flex=1 min-width=0
@@ -3469,7 +3587,7 @@ component TaskEditor
                     option "High" value="3"
                 row
                   text "Tags"
-                  input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" testId="task-tags" flex=1 min-width=0 appearance="none"
+                  input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" blur=autoSave testId="task-tags" flex=1 min-width=0 appearance="none"
           if col != "right"
             section
               if not creating and members.length > 1
@@ -4007,6 +4125,8 @@ component AgendaRow
 // inside) that "Show more" lifts, and folds shut from its chevron; so do its folders and lists.
 component DesktopSidebar
   props
+    serverHost: string
+    serverState: string
     current: string
     selected: string
     signedIn: bool
@@ -4159,10 +4279,24 @@ component DesktopSidebar
             column flex=1 min-width=0 gap=0
               text shown font="-exact-subheadline" line-clamp=1
               text email font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+              ServerLine(host=serverHost, state=serverState)
           NotifBell(count=unread)
 
 // The notifications bell: one image in the button (a button holding anything else draws its label on Android), the count
 // beside it as a badge that does not take taps.
+// The server this app talks to, with a check mark when it answered and accepted the token.
+component ServerLine
+  props
+    host: string
+    state: string
+  view
+    row gap=4 align-items="center" testId="server-line" aria-label=`Server ${host}: ${state == "ok" ? "connected" : state == "auth" ? "sign-in refused" : state == "" ? "checking" : "not reachable"}`
+      if state == "ok"
+        image "symbol:checkmark" color="-exact-system-green" flex-shrink=0 testId="server-ok"
+      if state != "ok" and state != ""
+        image "symbol:alert" color="-exact-system-red" flex-shrink=0 testId="server-bad"
+      text (host == "" ? "Checking…" : host) color=(state == "auth" or state == "down" or state == "error" ? "-exact-system-red" : "-exact-secondary-label") font="-exact-caption2" line-clamp=1 flex=1 min-width=0
+
 component NotifBell
   props
     count: number

@@ -189,8 +189,10 @@ export function createTasksRouter({ repos, requireAuth, liveHub = null, notifica
       }
 
       const timestamp = Date.now();
+      // Notes given with a new task are its first note, by whoever made it.
+      const { notes: firstNote, ...fields } = input;
       const data = {
-        ...input,
+        ...fields,
         id: input.id ?? nanoid(),
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -202,6 +204,7 @@ export function createTasksRouter({ repos, requireAuth, liveHub = null, notifica
         deviceId,
         data,
       });
+      if (firstNote?.trim()) repos.taskNotes.create({ taskId: task.id, userId: req.auth.userId, body: firstNote.trim() });
       notifyAssignee(task, req.auth.userId);
 
       res.status(201).json({ task });
@@ -212,6 +215,55 @@ export function createTasksRouter({ repos, requireAuth, liveHub = null, notifica
       }
       next(error);
     });
+  });
+
+  // A task's notes: a thread of notes, each with its author and time. Anyone who can read the task reads it;
+  // anyone who can write adds a note; a note's author (or the list's owner) removes it.
+  // The task's access for this person: through its list, or as the task's own owner; anyone else is told it is not there.
+  function noteAccess(taskId, me, writing) {
+    const task = repos.tasks.findAnyById(taskId);
+    const shared = task ? access.forTask(taskId, me) : null;
+    if (!task || (!shared && task.userId !== me)) throw new HttpError(404, "Task not found", "task_not_found");
+    return writing ? access.writeAs(shared, me) : access.readAs(shared, me);
+  }
+
+  router.get("/:id/notes", (req, res, next) => {
+    try {
+      noteAccess(req.params.id, req.auth.userId, false);
+      res.json({ notes: repos.taskNotes.list(req.params.id) });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/:id/notes", (req, res, next) => {
+    try {
+      const { body } = z.object({ body: z.string().trim().min(1).max(20000) }).parse(req.body ?? {});
+      noteAccess(req.params.id, req.auth.userId, true);
+      const note = repos.taskNotes.create({ taskId: req.params.id, userId: req.auth.userId, body });
+      res.status(201).json({ note });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        next(new HttpError(400, "A note needs some text", "invalid_note"));
+        return;
+      }
+      next(error);
+    }
+  });
+
+  router.delete("/:id/notes/:noteId", (req, res, next) => {
+    try {
+      const ownerId = noteAccess(req.params.id, req.auth.userId, true);
+      const note = repos.taskNotes.find(req.params.noteId);
+      if (!note || note.taskId !== req.params.id) throw new HttpError(404, "Note not found", "note_not_found");
+      if (note.userId !== req.auth.userId && ownerId !== req.auth.userId) {
+        throw new HttpError(403, "Only the author can remove this note", "access_denied");
+      }
+      repos.taskNotes.remove(note.id);
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.patch("/:id", (req, res, next) => {

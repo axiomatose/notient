@@ -156,7 +156,19 @@ async function call(store: unknown, path: string, init: RequestInit = {}): Promi
   return entry.promise;
 }
 
+// A read that can't reach the server is asked again twice, a moment apart: the first requests of a cold start can go out
+// before the network is ready, and nothing else would ask again until the person signs out and in.
 async function request(store: unknown, path: string, init: RequestInit = {}): Promise<Answered> {
+  const reads = (init.method ?? 'GET').toUpperCase() === 'GET';
+  let answer = await requestOnce(store, path, init);
+  for (let again = 1; reads && !answer.ok && answer.error === OFFLINE && again <= 2; again += 1) {
+    if (typeof setTimeout === 'function') await new Promise<void>((done) => setTimeout(done, again * 700));
+    answer = await requestOnce(store, path, init);
+  }
+  return answer;
+}
+
+async function requestOnce(store: unknown, path: string, init: RequestInit = {}): Promise<Answered> {
   const token = typeof store === 'object' && store !== null ? (store as { get(k: string): unknown }).get('token') : '';
   try {
     const res = await fetch(`${originOf(store)}${path}`, {
@@ -574,13 +586,25 @@ const sources: Sources = {
     const b = (r.ok ? r.body : {}) as { registration?: boolean; demo?: { email: string; password: string } | null };
     return { registration: b.registration !== false, demoEmail: b.demo?.email ?? '', demoPassword: b.demo?.password ?? '' };
   },
-  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store), fallback: origin, saved: savedOf(store) }),
+  // Asks the server the app is pointed at who this token is: its answer, or why there is none.
+  checkServer: async (_args: [string, string], store): Promise<Result<'checkServer'>> => {
+    const host = originOf(store).replace(/^https?:\/\//, '');
+    if (bearer(store) === '') return { host, state: 'auth' };
+    try {
+      const res = await fetch(`${originOf(store)}/profile`, { exactTimeout: 8000, headers: { authorization: `Bearer ${bearer(store)}` } } as RequestInit);
+      return { host, state: res.ok ? 'ok' : res.status === 401 ? 'auth' : 'error' };
+    } catch {
+      return { host, state: 'down' };
+    }
+  },
+  loadServer: (_args, store): Result<'loadServer'> => ({ server: kept(store) === origin ? '' : kept(store), fallback: origin, saved: savedOf(store) }),
   // Blank returns to the build's server. Signing out is the caller's: a token belongs to one server.
   saveServer: ([url], store): Result<'saveServer'> => {
     const v = url.trim().replace(/\/+$/, '');
     if (v !== '' && !/^https?:\/\/[^\s/]+(:\d+)?(\/[^\s]*)?$/.test(v)) return { ok: false, error: 'Use an address like https://notes.example.com.' };
     forgetAnswers();
-    (store as Store).set('server', v);
+    // Blank means the build's own server. It is written out rather than left empty, so a stored empty answer can never fall back to an older address.
+    (store as Store).set('server', v === '' ? origin : v);
     // A new address is remembered, so it can be picked again from the list.
     const saved = savedOf(store);
     if (v !== '' && v !== origin && !saved.includes(v)) (store as Store).set('servers', JSON.stringify([...saved, v]));
@@ -755,10 +779,10 @@ const sources: Sources = {
   updateTask: async ([id, title, notes, url, dueDay, dueTime, reminder, recurrence, flagged, priority, tags, listId, sectionId], store) => {
     const due = dueBody(dueDay, dueTime, reminder, recurrence);
     if ('error' in due) return { ok: false, error: due.error };
-    // A task's notes are a plain column: the app's Markdown is stored as written.
+    // A task's notes are its own thread (loadTaskNotes), not part of this save.
     return reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      body: JSON.stringify({ title, notes, url: url.trim() === '' ? null : url.trim(), ...due, flagged, priority: priority === 0 ? null : priority, tags, listId, sectionId: sectionId === '' ? null : sectionId }),
+      body: JSON.stringify({ title, url: url.trim() === '' ? null : url.trim(), ...due, flagged, priority: priority === 0 ? null : priority, tags, listId, sectionId: sectionId === '' ? null : sectionId }),
     }));
   },
   // Finishing a task in a list with a Done section moves it there (`doneSection` "" leaves it where it is); unchecking a task
@@ -959,6 +983,19 @@ const sources: Sources = {
     const lists = (r.body as { lists?: Record<string, unknown>[] }).lists ?? [];
     return { owner, lists: lists.map((l) => ({ id: String(l.id ?? ''), name: String(l.name ?? ''), sharedBy: String(l.sharedByDisplayName || l.sharedByEmail || ''), permission: String(l.permission ?? 'view'), icon: String(l.icon ?? ''), color: String(l.color ?? ''), uncategorizedName: String(l.uncategorized_name ?? ''), grocery: l.grocery_mode === 1, viewMode: String(l.view_mode ?? '') })) };
   },
+  // A task's notes: one entry per note, with who wrote it and when.
+  loadTaskNotes: async ([taskId], store): Promise<Result<'loadTaskNotes'>> => {
+    const owner = who(store);
+    if (owner === '' || taskId === '') return { owner, taskId, notes: [] };
+    const r = await callWith(store, `/tasks/${encodeURIComponent(taskId)}/notes`);
+    if (!r.ok) throw new Error(r.error);
+    const rows = (r.body as { notes?: { id: string; body: string; createdAt: number; userId: string; author?: { name?: string; email?: string; avatarIcon?: string | null; avatarColor?: string | null } }[] }).notes ?? [];
+    return { owner, taskId, notes: rows.map((n) => ({ id: n.id, body: n.body, createdAt: n.createdAt, userId: n.userId, name: n.author?.name || n.author?.email || '', email: n.author?.email ?? '', icon: n.author?.avatarIcon ?? '', color: n.author?.avatarColor ?? '' })) };
+  },
+  addTaskNote: async ([taskId, body], store) =>
+    reply(await callWith(store, `/tasks/${encodeURIComponent(taskId)}/notes`, { method: 'POST', body: JSON.stringify({ body }) })),
+  removeTaskNote: async ([taskId, noteId], store) =>
+    reply(await callWith(store, `/tasks/${encodeURIComponent(taskId)}/notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' })),
   loadAttachments: async ([taskId], store): Promise<Result<'loadAttachments'>> => {
     const owner = who(store);
     if (owner === '' || taskId === '') return { owner, taskId, items: [] };
@@ -1320,32 +1357,200 @@ export const answer: Answer = (source, args, store, storage, native) =>
     ? (exactTimeSource() as never)
     : sources[source as keyof typeof sources](args as never, store, storage, native) as never;
 
-// A dropped task shows where it landed at once: the server is asked for a fresh list, then for one PATCH, then the board is read
-// again, and over a slow link the card would otherwise snap back until all of that ends. The overlay applies the same move to the
-// task list the screen already has (new section, done state, and the slot before the card it was dropped on).
-export const overlay: Overlay = (source, args, answer, writes) => {
-  if (source !== 'loadTasks') return undefined;
-  const shown = [...(answer as Result<'loadTasks'>).tasks];
+// Every write shows at once. A write is asked for, then its reply lands, then the screen's lists are read again; over a slow link the
+// screen would otherwise keep the old row until all of that ends (a card moved, a box ticked, a title saved). The overlay applies each
+// pending write to the lists the screen already has: tasks, a board's sections and subtasks, the lists and the notes.
+type TaskRow = Result<'loadTasks'>['tasks'][number];
+type WriteOf = { readonly source: string; readonly args: unknown; readonly id: number; readonly answered: boolean };
+const flag = (v: unknown): boolean => String(v) === 'true';
+
+// The row a write leaves in place of `t`: changed, or null when the write removes it from this list. `listId` is the list shown ('' for
+// a task's subtasks, which follow their parent).
+const patchRow = (t: TaskRow, w: WriteOf, listId: string): TaskRow | null => {
+  const a = w.args as unknown[];
+  if (a[0] !== t.id) return t;
+  switch (w.source) {
+    case 'setTaskDoneIn': {
+      const [, done, doneSection] = a as [string, unknown, string];
+      return { ...t, isDone: flag(done), sectionId: doneSection === '-' ? '' : doneSection !== '' ? doneSection : t.sectionId };
+    }
+    case 'setTaskDone': return { ...t, isDone: flag(a[1]) };
+    case 'patchTask': return { ...t, flagged: flag(a[1]), priority: Number(a[2]) };
+    case 'assignTask': return { ...t, assigneeId: String(a[1]) };
+    case 'deleteTask': return null;
+    case 'moveTask': return listId !== '' && a[1] !== listId ? null : { ...t, sectionId: String(a[2]) };
+    case 'updateTask': {
+      const [, title, notes, url, dueDay, dueTime, reminder, recurrence, flagged, priority, tags, list, sectionId] = a as [string, string, string, string, string, string, string, string, unknown, number, string[], string, string];
+      if (listId !== '' && list !== listId) return null;
+      const due = dueBody(dueDay, dueTime, reminder, recurrence);
+      const dueAt = 'error' in due ? t.dueAt : due.dueAt ?? 0;
+      return { ...t, title, notes, url, dueDay, dueTime, dueAt, dueHasTime: dueTime !== '', recurrence, flagged: flag(flagged), priority, tags, sectionId };
+    }
+    default: return t;
+  }
+};
+
+const NEW_TASK = { notes: '', dueAt: 0, dueDay: '', dueTime: '', dueHasTime: false, remindAt: 0, flagged: false, recurrence: 'none', url: '', priority: 0, tags: [] as string[], version: 0, sortOrder: 0, subtaskCount: 0, parentId: '', assigneeId: '', completedAt: 0 };
+
+// A write's new task, as the screen will show it until the server's own row arrives (its id is not the server's).
+const newRowOf = (w: WriteOf, listId: string): TaskRow | null => {
+  const a = w.args as unknown[];
+  const id = `pending-${w.id}`;
+  if (w.answered) return null;
+  if (w.source === 'createTask' && a[0] === listId) return { ...NEW_TASK, id, title: String(a[2]), isDone: false, sectionId: String(a[1]) };
+  if (w.source === 'createTaskFull' && a[0] === listId) {
+    const [, sectionId, title, notes, url, dueDay, dueTime, reminder, recurrence, flagged, priority, tags] = a as [string, string, string, string, string, string, string, string, string, unknown, number, string[]];
+    const due = dueBody(dueDay, dueTime, reminder, recurrence);
+    return { ...NEW_TASK, id, title, notes, url, dueDay, dueTime, dueAt: 'error' in due ? 0 : due.dueAt ?? 0, dueHasTime: dueTime !== '', recurrence, flagged: flag(flagged), priority, tags, isDone: false, sectionId };
+  }
+  return null;
+};
+
+// Last in its group: after the section's final card of its done state, else with the block it belongs to.
+const putLast = (shown: TaskRow[], moved: TaskRow): void => {
+  let end = -1;
+  shown.forEach((t, i) => { if (t.isDone === moved.isDone && t.sectionId === moved.sectionId) end = i; });
+  if (end >= 0) shown.splice(end + 1, 0, moved);
+  else if (moved.isDone) shown.push(moved);
+  else {
+    const firstDone = shown.findIndex((t) => t.isDone);
+    shown.splice(firstDone < 0 ? shown.length : firstDone, 0, moved);
+  }
+};
+
+// The top-level tasks of list `listId` after `writes`.
+const tasksAfter = (rows: readonly TaskRow[], listId: string, writes: readonly WriteOf[]): TaskRow[] => {
+  let shown = [...rows];
   for (const w of writes) {
-    if (w.source !== 'placeTask') continue;
-    const [listId, taskId, sectionId, before, doneFlag] = w.args as [string, string, string, string, string];
-    if (listId !== (args as [string])[0]) continue;
-    const from = shown.findIndex((t) => t.id === taskId);
-    if (from < 0) continue;
-    const moved = { ...shown[from], sectionId };
-    if (doneFlag === 'done') moved.isDone = true;
-    else if (doneFlag === 'open') moved.isDone = false;
-    shown.splice(from, 1);
-    const at = before === '' ? -1 : shown.findIndex((t) => t.id === before);
-    if (at >= 0) shown.splice(at, 0, moved);
-    else {
-      // Last in its column: after the column's final card, else with the open/done block it belongs to.
-      let end = -1;
-      shown.forEach((t, i) => { if (t.isDone === moved.isDone && t.sectionId === sectionId) end = i; });
-      if (end >= 0) shown.splice(end + 1, 0, moved);
-      else if (moved.isDone) shown.push(moved);
-      else shown.splice(shown.findIndex((t) => t.isDone) < 0 ? shown.length : shown.findIndex((t) => t.isDone), 0, moved);
+    const a = w.args as unknown[];
+    if (w.source === 'placeTask') {
+      const [list, taskId, sectionId, before, doneFlag] = a as [string, string, string, string, string];
+      if (list !== listId) continue;
+      const from = shown.findIndex((t) => t.id === taskId);
+      if (from < 0) continue;
+      const moved = { ...shown[from], sectionId };
+      if (doneFlag === 'done') moved.isDone = true;
+      else if (doneFlag === 'open') moved.isDone = false;
+      shown.splice(from, 1);
+      const at = before === '' ? -1 : shown.findIndex((t) => t.id === before);
+      if (at >= 0) shown.splice(at, 0, moved);
+      else putLast(shown, moved);
+    } else if (w.source === 'createSubtask') {
+      if (!w.answered && a[0] === listId) shown = shown.map((t) => (t.id === a[1] ? { ...t, subtaskCount: t.subtaskCount + 1 } : t));
+    } else {
+      const fresh = newRowOf(w, listId);
+      if (fresh) {
+        putLast(shown, fresh);
+        continue;
+      }
+      shown = shown.flatMap((t) => {
+        const r = patchRow(t, w, listId);
+        return r ? [r] : [];
+      });
+      if (w.source === 'deleteTask') shown = shown.filter((t) => t.parentId === '' || t.parentId !== a[0]);
     }
   }
-  return { ...(answer as Result<'loadTasks'>), tasks: shown } as never;
+  return shown;
+};
+
+// A task's subtasks (or a board's), where `parent` is the one parent shown ('' for a whole board's).
+const subtasksAfter = (rows: readonly TaskRow[], parent: string, listId: string, writes: readonly WriteOf[]): TaskRow[] => {
+  let shown = [...rows];
+  for (const w of writes) {
+    const a = w.args as unknown[];
+    if (w.source === 'createSubtask') {
+      if (!w.answered && (parent !== '' ? a[1] === parent : a[0] === listId)) shown.push({ ...NEW_TASK, id: `pending-${w.id}`, title: String(a[2]), isDone: false, sectionId: '', parentId: String(a[1]) });
+    } else {
+      shown = shown.flatMap((t) => {
+        const r = patchRow(t, w, '');
+        return r ? [r] : [];
+      });
+    }
+  }
+  return shown;
+};
+
+export const overlay: Overlay = (source, args, answer, writes) => {
+  const ws = writes as readonly WriteOf[];
+  switch (source) {
+    case 'loadTasks': {
+      const got = answer as Result<'loadTasks'>;
+      return { ...got, tasks: tasksAfter(got.tasks, (args as [string])[0], ws) } as never;
+    }
+    case 'loadSections': {
+      const got = answer as Result<'loadSections'>;
+      const listId = (args as [string])[0];
+      const ordered = tasksAfter(got.sections.flatMap((s) => s.tasks), listId, ws);
+      let sections = got.sections.map((s) => ({ ...s, tasks: [] as TaskRow[] }));
+      for (const w of ws) {
+        const a = w.args as unknown[];
+        if (w.source === 'createSection' && a[0] === listId && !w.answered) sections.push({ id: `pending-${w.id}`, name: String(a[1]), icon: String(a[2]), color: String(a[3]), tasks: [] });
+        else if (w.source === 'renameSection') sections = sections.map((s) => (s.id === a[1] ? { ...s, name: String(a[2]) } : s));
+        else if (w.source === 'updateSection') sections = sections.map((s) => (s.id === a[1] ? { ...s, icon: String(a[2]), color: String(a[3]) } : s));
+        else if (w.source === 'placeSection' && a[0] === listId) {
+          const from = sections.findIndex((s) => s.id === a[1]);
+          if (from >= 0) {
+            const [moved] = sections.splice(from, 1);
+            const at = a[2] === '' ? -1 : sections.findIndex((s) => s.id === a[2]);
+            if (at >= 0) sections.splice(at, 0, moved);
+            else sections.push(moved);
+          }
+        }
+      }
+      for (const t of ordered) {
+        const home = sections.find((s) => s.id === t.sectionId);
+        if (home) home.tasks.push(t);
+      }
+      return { ...got, sections } as never;
+    }
+    case 'loadSubtasks': {
+      const got = answer as Result<'loadSubtasks'>;
+      return { ...got, tasks: subtasksAfter(got.tasks, (args as [string])[0], '', ws) } as never;
+    }
+    case 'loadBoardSubtasks': {
+      const got = answer as Result<'loadBoardSubtasks'>;
+      return { ...got, tasks: subtasksAfter(got.tasks, '', (args as [string])[0], ws) } as never;
+    }
+    case 'loadTaskNotes': {
+      const got = answer as Result<'loadTaskNotes'>;
+      const taskId = (args as [string])[0];
+      let notes = [...got.notes];
+      for (const w of ws) {
+        const a = w.args as unknown[];
+        if (w.source === 'addTaskNote' && a[0] === taskId && !w.answered) notes.push({ id: `pending-${w.id}`, body: String(a[1]), createdAt: 0, userId: '', name: '', email: '', icon: '', color: '' });
+        else if (w.source === 'removeTaskNote' && a[0] === taskId) notes = notes.filter((n) => n.id !== a[1]);
+      }
+      return { ...got, notes } as never;
+    }
+    case 'loadLists': {
+      const got = answer as Result<'loadLists'>;
+      let lists = [...got.lists];
+      for (const w of ws) {
+        const a = w.args as unknown[];
+        if (w.source === 'createList') { if (!w.answered) lists.push({ id: `pending-${w.id}`, name: String(a[0]), folderId: a[1] === '-' ? '' : String(a[1]), icon: String(a[2]), color: String(a[3]), uncategorizedName: '', grocery: flag(a[4]), viewMode: 'list' }); }
+        else if (w.source === 'updateList') lists = lists.map((l) => (l.id === a[0] ? { ...l, name: String(a[1]), folderId: a[2] === '-' ? '' : String(a[2]), icon: String(a[3]), color: String(a[4]), grocery: flag(a[5]) } : l));
+        else if (w.source === 'renameUncategorized') lists = lists.map((l) => (l.id === a[0] ? { ...l, uncategorizedName: String(a[1]) } : l));
+        else if (w.source === 'setListView') lists = lists.map((l) => (l.id === a[0] ? { ...l, viewMode: String(a[1]) } : l));
+        else if (w.source === 'deleteList') lists = lists.filter((l) => l.id !== a[0]);
+      }
+      return { ...got, lists } as never;
+    }
+    case 'loadNotes': {
+      const got = answer as Result<'loadNotes'>;
+      let notes = [...got.notes];
+      for (const w of ws) {
+        const a = w.args as unknown[];
+        if (w.source === 'patchNote') notes = notes.map((n) => (n.id === a[0] ? { ...n, isPinned: flag(a[1]), tags: a[2] as string[], folder: String(a[3]) } : n));
+        else if (w.source === 'updateNote') notes = notes.map((n) => (n.id === a[0] ? { ...n, title: String(a[1]), body: String(a[2]), isPinned: flag(a[3]), tags: a[4] as string[], folder: String(a[5]) } : n));
+        else if (w.source === 'trashNote') notes = notes.map((n) => (n.id === a[0] ? { ...n, deletedAt: 1 } : n));
+        else if (w.source === 'restoreNote') notes = notes.map((n) => (n.id === a[0] ? { ...n, deletedAt: 0 } : n));
+        else if (w.source === 'deleteNote') notes = notes.filter((n) => n.id !== a[0]);
+      }
+      notes.sort((a, b) => (a.isPinned === b.isPinned ? b.updatedAt - a.updatedAt : a.isPinned ? -1 : 1));
+      const folders = [...new Set(notes.filter((n) => n.folder !== '' && n.deletedAt === 0).map((n) => n.folder))].sort();
+      const tags = [...new Set(notes.filter((n) => n.deletedAt === 0).flatMap((n) => n.tags))].sort();
+      return { ...got, notes, folders, tags } as never;
+    }
+    default: return undefined;
+  }
 };
