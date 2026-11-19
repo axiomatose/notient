@@ -78,6 +78,15 @@ jobs:
         working-directory: notient/app
         run: bun ../../exact/scripts/exact.mjs setup
 
+      # Exact's Apple host needs Swift 6.4 or later, newer than the runner's default Xcode: use the newest one installed.
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          xcode=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
       # The certificate lives in a throwaway keychain that is deleted at the end of the job.
       - name: Import the signing certificate
         id: sign
