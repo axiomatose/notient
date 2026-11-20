@@ -78,5 +78,8 @@
       "ios",
       "macos"
     ]
-  }
+  },
+  "display_override": [
+    "window-controls-overlay"
+  ]
 }

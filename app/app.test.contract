@@ -357,6 +357,8 @@ test "a task carries notes, a due date, priority, tags and subtasks"
   clock settle
   expect state subtasks.tasks.0 .title == "Buy gaskets"
   tap "Delete Buy gaskets"
+  clock settle
+  tap "subtask-delete-confirm"
   clock data
   clock settle
   expect state subtasks.tasks == []
@@ -1685,7 +1687,7 @@ test "the desktop sidebar shows brand, recents and user"
   clock settle
   expect state winW == 1280
   expect tree has "sidebar"
-  expect tree has "sidebar-brand"
+  expect tree has "titlebar"
   expect tree has "side-tab-notes"
   expect tree has "sidebar-user"
   tap "side-new-note"
@@ -1696,6 +1698,14 @@ test "the desktop sidebar shows brand, recents and user"
   clock data
   clock settle
   expect state sideNotes.0 .title == "Sidebar note"
+  expect tree has "crumb-section"
+  tap "sidebar-toggle"
+  clock settle
+  expect state sideOpen == false
+  expect tree missing "side-tab-notes"
+  tap "sidebar-toggle"
+  clock settle
+  expect tree has "side-tab-notes"
   tap "sidebar-user"
   clock settle
   expect text "persona-name" == "Sb"
@@ -2693,7 +2703,7 @@ test "a card moved on the board while its drawer is open keeps its new section w
   tap "Open Sweep"
   clock settle
   expect tree has "drawer"
-  tap "Hold and drag Sweep to reorder" contextmenu
+  tap "Open Sweep" contextmenu
   clock settle
   tap "grp-section"
   tap "Move to Outside"
@@ -2737,7 +2747,7 @@ test "a change made on the board shows in the open drawer, and saving the drawer
   tap "Open Sweep"
   clock settle
   expect tree has "drawer"
-  tap "Hold and drag Sweep to reorder" contextmenu
+  tap "Open Sweep" contextmenu
   clock settle
   tap "ctx-flag"
   clock data
@@ -2796,6 +2806,15 @@ test "a task's right-click menu flags, prioritises, completes and deletes it"
   tap "Sweep" contextmenu
   clock settle
   tap "ctx-delete"
+  clock settle
+  tap "ctx-delete-cancel"
+  clock settle
+  expect state tasks.tasks.length == 1
+  tap "Sweep" contextmenu
+  clock settle
+  tap "ctx-delete"
+  clock settle
+  tap "ctx-delete-confirm"
   clock data
   clock settle
   expect state tasks.tasks.length == 0

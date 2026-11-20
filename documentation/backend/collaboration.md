@@ -11,7 +11,8 @@ A list's owner shares it by email with permission `view` or `edit` (`POST /task-
 - Repos: `tasks.findAnyById`, `taskSections.findAnyById`.
 - Shared lists reach the person via `GET /task-list-shares/shared-with-me` (returns the list's columns, `permission`, `sharedByEmail`); the app lists them under "Shared with me" and `allLists` gives the open list its name/look.
 - `GET /tasks/board?listId=` (`routes/tasks.js`): one read for a board/list screen → `{sections, tasks, subtasks, members}`: exactly what `GET /task-sections?listId=`, `GET /tasks?listId=` (top-level), `GET /tasks?parentId=` for each task with `subtaskCount > 0` (concatenated), and `GET /task-list-shares/members/:listId` return. Owner or shared viewer/editor reads it as the owner; no access → 404 `task_list_not_found`; missing `listId` → 400 `invalid_query`.
-- Not yet shared: attachments, subtask counts across owners, task notifications, `/tasks?since` sync.
+- Attachments follow the task's list access (`routes/taskAttachments.js` `taskFor`): owner, editor and admin read and write, viewer reads, strangers get 404.
+- Not yet shared: subtask counts across owners, task notifications, `/tasks?since` sync.
 - Claude's own account: credentials in `~/.config/notient-claude/credentials.env` (outside the repo).
 
 ## Tests

@@ -204,6 +204,7 @@ shape TaskNote
   email: string
   icon: string
   color: string
+  photo: string
 
 shape TaskNotes
   owner: string
@@ -500,6 +501,8 @@ fn bundledIcons(): BundledIcon[] = [
   ])
 ]
 fn bundledNames(): string[] = bundledIcons().map(b => b.name)
+// The Lucide `grip-horizontal` icon (ISC), for the board card's drag strip.
+fn gripPaths(): string[] = ["M11 9 A1 1 0 1 0 13 9 A1 1 0 1 0 11 9 Z", "M18 9 A1 1 0 1 0 20 9 A1 1 0 1 0 18 9 Z", "M4 9 A1 1 0 1 0 6 9 A1 1 0 1 0 4 9 Z", "M11 15 A1 1 0 1 0 13 15 A1 1 0 1 0 11 15 Z", "M18 15 A1 1 0 1 0 20 15 A1 1 0 1 0 18 15 Z", "M4 15 A1 1 0 1 0 6 15 A1 1 0 1 0 4 15 Z"]
 fn isBundled(name: string): bool = bundledNames().includes(name)
 fn iconPaths(name: string): string[] = match first(bundledIcons().filter(b => b.name == name)) { case some(b) => b.paths, case none => [] }
 // An icon's paths: the bundle first, else the fetched answer (lucideIcon, one per name in the lists' and sections' icons).
@@ -713,6 +716,10 @@ component App
   state styleNameDraft = ""
   // The task the right-click / long-press menu was opened on ("" none).
   state ctxTask = ""
+  // The desktop sidebar shown (the title bar's toggle).
+  state sideOpen = true
+  // The subtask waiting on the delete confirmation ("" none).
+  state subDelete = ""
   state openGroups = ""
   // The note the right-click / long-press menu was opened on ("" none).
   state ctxNote = ""
@@ -735,6 +742,11 @@ component App
   derive wide = winW >= 900
   derive activeBoardCol = boardActive != "" and boardIds.filter(c => c == boardActive).length > 0 ? boardActive : (match first(boardIds.filter(c => colTasks(tasks.tasks, c, doneSectionId, "").length > 0)) { case some(c) => c, case none => orEmpty(first(boardIds)) })
   state now = 0
+  // The title bar's crumbs (wide window, signed in): the section, then its folder, list or note.
+  derive crumbOnList = top(nav).name == "taskList" and openList != ""
+  derive crumbOnNote = top(nav).name == "note" or top(nav).name == "newNote"
+  derive crumbFolder = crumbOnList ? (listOf(allLists, openList).folderId == "" ? "Unfiled" : folderNameOf(taskFolders.folders, listOf(allLists, openList).folderId)) : editorFolder == "" ? "Unfiled" : editorFolder
+  derive crumbLeaf = crumbOnList ? listName(allLists, openList) : editorTitle.trim() == "" ? "Untitled" : editorTitle.trim()
   derive openList = match stack(nav).filter(e => e.name == "taskList").at(-1) { case some(e) => e.params.id, case none => "" }
   derive openTask = drawerTask != "" ? drawerTask : match stack(nav).filter(e => e.name == "taskDetail").at(-1) { case some(e) => e.params.id, case none => "" }
   derive editListId = match stack(nav).filter(e => e.name == "editList").at(-1) { case some(e) => e.params.id, case none => "" }
@@ -938,10 +950,10 @@ component App
   mutation linkRevoked as shape Reply refreshes links
   mutation personShared as shape Reply refreshes noteSharesRes
   mutation personUnshared as shape Reply refreshes noteSharesRes
-  mutation taskSaved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks then afterTaskSaved
+  mutation taskSaved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks, view, recentEvents then afterTaskSaved
   mutation taskNoteAdded as shape Reply queue refreshes taskNotes
   mutation taskNoteRemoved as shape Reply queue refreshes taskNotes
-  mutation taskDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
+  mutation taskDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks, view, recentEvents
   mutation sectionAdded as shape Reply queue refreshes sections, tasks then afterSectionAdd
   mutation subtaskAdded as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks
   mutation subtaskDone as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks
@@ -957,16 +969,16 @@ component App
   mutation listAdded as shape Reply queue refreshes lists then afterListAdd
   mutation noneRenamed as shape Reply queue refreshes lists then afterNoneRename
   mutation tasksSorted as shape Reply queue refreshes tasks, sections, recentTasks
-  mutation sectionTaskAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks then afterSectionTaskAdd
+  mutation sectionTaskAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks, view, recentEvents then afterSectionTaskAdd
   mutation sectionRenamed as shape Reply queue refreshes sections, tasks then afterSectionRename
   mutation sectionStyled as shape Reply queue refreshes sections
   mutation listQuickAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks then afterListQuickAdd
-  mutation newTaskAdded as shape Reply queue refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterNewTaskAdd
+  mutation newTaskAdded as shape Reply queue refreshes lists, sections, tasks, boardSubtasks, recentTasks, view, recentEvents then afterNewTaskAdd
   mutation taskReordered as shape ReorderReply refreshes tasks, sections, boardSubtasks, recentTasks
   mutation taskAssigned as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation notificationsRead as shape Reply refreshes notifications
-  mutation taskToggled as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks
-  mutation taskPatched as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks
+  mutation taskToggled as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks, view, recentEvents
+  mutation taskPatched as shape Reply queue refreshes tasks, sections, boardSubtasks, recentTasks, view, recentEvents
   mutation taskMoved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation ctxDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks
   mutation eventAdded as shape Reply refreshes view, recentEvents then afterEventAdd
@@ -1020,6 +1032,8 @@ component App
       refresh notifications
     else if liveKind == "tasks"
       refresh recentTasks
+      refresh view
+      refresh recentEvents
       refresh sharedLists
       refresh lists
       if top(nav).name == "taskList" and openList != ""
@@ -1072,6 +1086,15 @@ component App
     now = performanceNow()
   action pick(name: string)
     nav = select(nav, name)
+  action crumbHome
+    nav = open(nav, top(nav).name == "taskList" ? "/tasks" : "/")
+  action toggleSidebar
+    sideOpen = not sideOpen
+  action crumbMode
+    if editorMode == "edit"
+      saveAndClose()
+    else
+      startEdit()
   action onWinResize(w: number, h: number)
     winW = w
   action back
@@ -1524,7 +1547,11 @@ component App
     if not pending(subtaskRenamed)
       send subtaskRenamed = updateTask(id, title, notes, url, dueDay, dueTime, reminder, recurrence, flagged, priority, tags, openList, sectionId)
   action deleteSubtask(id: string)
-    send taskDeleted = deleteTask(id)
+    subDelete = id
+    showModal("delete-subtask")
+  action deleteSubtaskNow
+    send taskDeleted = deleteTask(subDelete)
+    subDelete = ""
   action reorderTasksNow(dragged: string, before: string)
     send taskReordered = reorderTasks(openList, dragged, before)
   action postTaskNote(taskId: string, body: string)
@@ -1748,6 +1775,8 @@ component App
   action ctxCalEdit
     openCalEdit(ctxCal, ctxCalRow.name, ctxCalRow.color)
   action ctxDelete
+    showModal("delete-task-ctx")
+  action ctxDeleteNow
     send ctxDeleted = deleteTask(ctxTask)
   action openNewEvent
     if wide
@@ -1906,11 +1935,40 @@ component App
       nav = back(nav)
 
   view
-    main navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
+    main viewport-fit="cover" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
       if wide and session.signedIn
-        DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
-      column flex=1 min-width=0 min-height=0 position="relative"
+        // The title bar: our own row under the window controls (display_override window-controls-overlay, wide routes say navigationBar="none").
+        row position="absolute" top=0 left=0 right=0 height=44 z-index=10 align-items="center" box-sizing="border-box" border-bottom="1px solid light-dark(#e5e5ea, #2c2c2e)" pointer-events="none" testId="titlebar"
+          row width=(sideOpen ? "21rem" : "auto") height=44 flex-shrink=0 align-items="center" gap=6 box-sizing="border-box" padding-top=8 padding-left="calc(env(titlebar-area-x, 0px) + 8px)" padding-right=12 background-color=(sideOpen ? "light-dark(#eef1f6, #1a1c21)" : "transparent") testId="titlebar-left"
+            button press=toggleSidebar appearance="none" pointer-events="auto" aria-label="Toggle the sidebar" testId="sidebar-toggle" width=28 height=28 display="flex" align-items="center" justify-content="center"
+              LucideIcon(paths=["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M9 3v18"], color="-exact-secondary-label", size=18)
+            text "Notient" font="-exact-headline"
+          row flex=1 min-width=0 height=44 align-items="center" gap=6 box-sizing="border-box" padding-top=8 padding-left=12 padding-right=12 testId="crumbs-row"
+            if nav.tab == "tasks"
+              button press=crumbHome appearance="none" pointer-events="auto" testId="crumb-section" padding="2px 8px" border-radius=6 background-color=(crumbOnList ? "transparent" : "light-dark(#e3ecfb, #2a3a55)")
+                text "Tasks" color="AccentColor" font="-exact-subheadline"
+              if crumbOnList
+                text "/" color="-exact-secondary-label" font="-exact-subheadline"
+                button press=crumbHome appearance="none" pointer-events="auto" testId="crumb-folder"
+                  text crumbFolder font="-exact-subheadline" color="-exact-secondary-label"
+                text "/" color="-exact-secondary-label" font="-exact-subheadline"
+                text crumbLeaf font="-exact-subheadline" testId="crumb-leaf" line-clamp=1 min-width=0
+            else if nav.tab == "notes"
+              button press=crumbHome appearance="none" pointer-events="auto" testId="crumb-section" padding="2px 8px" border-radius=6 background-color=(crumbOnNote ? "transparent" : "light-dark(#e3ecfb, #2a3a55)")
+                text "Notes" color="AccentColor" font="-exact-subheadline"
+              if crumbOnNote
+                text "/" color="-exact-secondary-label" font="-exact-subheadline"
+                button press=crumbHome appearance="none" pointer-events="auto" testId="crumb-folder"
+                  text crumbFolder font="-exact-subheadline" color="-exact-secondary-label"
+                text "/" color="-exact-secondary-label" font="-exact-subheadline"
+                text crumbLeaf font="-exact-subheadline" testId="crumb-leaf" line-clamp=1 min-width=0
+                text "/" color="-exact-secondary-label" font="-exact-subheadline"
+                button press=crumbMode appearance="none" pointer-events="auto" testId="crumb-mode"
+                  text (editorMode == "edit" ? "Edit" : "View") font="-exact-subheadline" color="AccentColor"
+        if sideOpen
+          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
+      column flex=1 min-width=0 min-height=0 position="relative" margin-top=0
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
             for e in t.stack key=e.id
@@ -1919,7 +1977,7 @@ component App
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
                     SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else if wide
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" testId="notes-pane"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column" testId="notes-pane"
                     if sideNotes.length == 0
                       EmptyState(symbol="symbol:document", title="Nothing written yet", message="Start with a note. It shows up in the sidebar as soon as it has a title or a line.")
                         button press=openNewNote testId="pane-add-note"
@@ -1937,15 +1995,16 @@ component App
                                 text (n.title.trim() == "" ? "Untitled" : n.title) font="-exact-headline" line-clamp=1
                                 text (isVault(n.tags) ? "Vault note" : previewOf(n.body) == "" ? "No text yet." : previewOf(n.body)) font="-exact-subheadline" color="-exact-secondary-label" line-clamp=3
                 else
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column" contextPopover="empty-notes-menu"
-                    header display="flex" align-items="center" gap=8 padding="8px 16px"
+                    header display="flex" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona"
                           image "symbol:person"
                         if nav.tab == "notes"
                           NotifBell(count=unreadCount)
-                      text "Notes" role="heading" aria-level=1 flex=1 min-width=0
+                      if not wide
+                        text "Notes" role="heading" aria-level=1 flex=1 min-width=0
                       button press=openNewNote aria-label="New Note" testId="add-note"
                         image "symbol:compose"
                       button press=openTrash aria-label="Trash" testId="open-trash"
@@ -2020,22 +2079,23 @@ component App
               if e.name == "note"
                 if sameOwner
                   for n in lib.notes.filter(x => x.id == e.params.id) key=`${n.id}-${n.version}`
-                    NoteEditor(route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved)), error=saveError, imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=false)
+                    NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved)), error=saveError, imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=false)
                 else if pending(lib)
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="note-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Note", message="Couldn’t load this note. Try again.")
                       button press=pullNotes testId="note-retry"
                         text "Try Again"
               if e.name == "trash"
                 if sameOwner
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column"
-                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
-                      text "Trash" role="heading" aria-level=1 flex="1 1 8rem"
+                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
+                      if not wide
+                        text "Trash" role="heading" aria-level=1 flex="1 1 8rem"
                     list id=`content-${e.id}` appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                       if deletedNotes.length == 0
                         section
@@ -2054,11 +2114,11 @@ component App
                               button press=askForever(n.id) destructive=true aria-label=`Delete ${n.title} forever` testId=`forever-${n.id}`
                                 text "Delete"
                 else if pending(lib)
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="trash-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Trash", message="Couldn’t load the trash. Try again.")
                       button press=pullNotes testId="trash-retry"
                         text "Try Again"
@@ -2119,10 +2179,11 @@ component App
                                 text "Remove"
               if e.name == "sharedNote"
                 if sharedSame
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column"
-                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
-                      text "Shared with you" role="heading" aria-level=2 flex="1 1 8rem"
+                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
+                      if not wide
+                        text "Shared with you" role="heading" aria-level=2 flex="1 1 8rem"
                     list id=`content-${e.id}` appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                       for sn in shared.notes.filter(x => x.id == e.params.id) key=sn.id
                         section
@@ -2133,19 +2194,20 @@ component App
                         section
                           NoteBlocks(body=textOf(sn.body), editable=false, toggle=toggleTaskLine, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, blocksId="shared-body", vault=false, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, zoom=openLightbox)
                 else if pending(shared)
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="shared-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Note", message="This shared note couldn’t be loaded. Try again.")
                       button press=pullShared testId="shared-retry"
                         text "Try Again"
               if e.name == "publicNote"
-                column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                   display="flex" flex-direction="column"
-                  header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
-                    text "Shared note" role="heading" aria-level=1 flex="1 1 8rem"
+                  header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
+                    if not wide
+                      text "Shared note" role="heading" aria-level=1 flex="1 1 8rem"
                   if pending(publicNote)
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="public-loading"
@@ -2159,13 +2221,13 @@ component App
                   else
                     EmptyState(symbol="symbol:link", title="No Note Here", message="This link is gone, expired or the note was deleted.")
               if e.name == "newNote"
-                NoteEditor(route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved) or pending(noteStarted)), error=(addError != "" ? addError : saveError), imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=true)
+                NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved) or pending(noteStarted)), error=(addError != "" ? addError : saveError), imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=true)
               if e.name == "tasks"
                 if not session.signedIn
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
                     SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else if wide
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" testId="tasks-pane"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column" testId="tasks-pane"
                     if not listsSame or lists.lists.length == 0
                       EmptyState(symbol="symbol:list", title="No lists yet", message="A list for the weekly shop is a good first one.")
                         button press=openNewList testId="pane-new-list"
@@ -2191,15 +2253,16 @@ component App
                                 if recentTaskRows.filter(x => x.listId == l.id).length == 0
                                   text "Nothing open." font="-exact-subheadline" color="-exact-secondary-label"
                 else
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column" contextPopover="empty-tasks-menu"
-                    header display="flex" align-items="center" gap=8 padding="8px 16px"
+                    header display="flex" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona-tasks"
                           image "symbol:person"
                         if nav.tab == "tasks"
                           NotifBell(count=unreadCount)
-                      text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
+                      if not wide
+                        text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
                       button press=openNewList aria-label="New list" testId="new-list-button"
                         image "symbol:list"
                       button popovertarget="new-folder-pop" aria-label="New folder" testId="new-folder-button"
@@ -2253,13 +2316,14 @@ component App
                         image "symbol:add" width=26 height=26
               if e.name == "taskList"
                 if tasks.owner == session.email and tasks.listId == e.params.id
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column"
-                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding="8px 16px"
+                    header display="flex" flex-wrap="wrap" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
                       row gap=6 align-items="center" flex="1 1 8rem" min-width=0
-                        if listOf(allLists, e.params.id).icon != ""
-                          LucideIcon(paths=iconPathsOf(listOf(allLists, e.params.id).icon, fetchedIcons), color=listOf(allLists, e.params.id).color, size=22)
-                        text listName(allLists, e.params.id) role="heading" aria-level=2 color=colorOr(listOf(allLists, e.params.id).color) min-width=0
+                        if not wide
+                          if listOf(allLists, e.params.id).icon != ""
+                            LucideIcon(paths=iconPathsOf(listOf(allLists, e.params.id).icon, fetchedIcons), color=listOf(allLists, e.params.id).color, size=22)
+                          text listName(allLists, e.params.id) role="heading" aria-level=2 color=colorOr(listOf(allLists, e.params.id).color) min-width=0
                       if groceryOn and aiStatus != ""
                         button press=sortByAisle disabled=aiBusy aria-label="Sort by aisle with Apple Intelligence" testId="list-ai"
                           image "symbol:sparkles"
@@ -2406,10 +2470,14 @@ component App
                                 list id=`board-list-${col}` reorderGroup="board" reorderdrop=dropTask appearance="none" virtualized=true flex=1 min-height=0 width="100%"
                                   for tk in colTasks(tasks.tasks, col, doneSectionId, doneQuery) key=tk.id
                                     column padding-bottom=6 width="100%" box-sizing="border-box"
-                                      row gap=6 align-items="center" padding=10 border-radius=10 background-color="light-dark(#fff, #2c2c2e)" width="100%" box-sizing="border-box" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
-                                        view reorderFor=`board-list-${col}` touch-action="none" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` width=28 height=44 flex-shrink=0 display="flex" align-items="center" justify-content="center"
-                                          image "symbol:menu" width=16 height=16 color="-exact-secondary-label"
+                                      // PLACEHOLDER HACK (expo/exact#933): a drop goes to the column under the centre of the lifted card, not under the
+                                      // finger, so the grip is a strip centred along the card's bottom: the finger then holds the card's centre
+                                      // line and a drag toward another column drops there. When Exact targets by the finger, put the grip back
+                                      // on the left (a 28x44 view beside BoardCardBody, `symbol:menu`) and drop the strip and gripPaths().
+                                      column gap=2 padding="10px 10px 2px" border-radius=10 background-color="light-dark(#fff, #2c2c2e)" width="100%" box-sizing="border-box" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
                                         BoardCardBody(tk=tk, todayMs=todayMs, today=today, offset=time.utcOffset, members=memberList, subs=(boardSubtasks.listId == openList ? boardSubtasks.tasks.filter(s => s.parentId == tk.id) : []), toggle=toggleTask, open=openTaskDetail)
+                                        view reorderFor=`board-list-${col}` touch-action="none" aria-label=`Hold and drag ${tk.title} to reorder` testId=`board-grip-${tk.id}` width="100%" height=24 flex-shrink=0 display="flex" align-items="center" justify-content="center"
+                                          LucideIcon(paths=gripPaths(), color="", size=18)
                                 if sectionAdding == col
                                   column gap=4 flex-shrink=0
                                     input value=sectionTaskDraft input=editSectionTaskDraft submit=addSectionTask blur=cancelSectionAdd placeholder="New task" appearance="none"
@@ -2479,11 +2547,11 @@ component App
                             view width=36 height=5 border-radius=3 background-color="light-dark(#c7c7cc, #48484a)"
                           TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=true, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=closeDrawer, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today, noteRows=(taskNotes.taskId == tk.id ? taskNotes.notes : []), me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
                 else if pending(tasks) and openList == e.params.id
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="tasks-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Tasks", message=(tasksError != "" ? tasksError : "Couldn’t load this list. Try again."))
                       button press=pullTasks testId="tasks-retry"
                         text "Try Again"
@@ -2493,7 +2561,7 @@ component App
                     column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="edit-list" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
                       EditListSheet(route=e.id, list=l, creating=false, folders=taskFolders.folders, fetched=fetchedIcons, hits=iconHits.names, query=iconQuery, queryEdit=editIconQuery, probe=probeIcon, save=saveListNow, remove=askDeleteList, share=openShareList, cancel=back, error=listSaveError, saving=(pending(listSaved)))
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="edit-list-loading"
               if e.name == "newList"
@@ -2508,11 +2576,11 @@ component App
                     column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="task-edit" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
                       TaskEditor(route=e.id, task=tk, creating=false, listId=openList, lists=lists.lists, sections=sections.sections, members=memberList, assign=assignTaskNow, saveClose=saveTaskClose, wide=wide, drawer=false, zoom=openLightbox, subs=subtasks.tasks, images=attachments.items, save=saveTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=taskSaveError, saving=(pending(taskSaved)), offset=time.utcOffset, today=today, noteRows=(taskNotes.taskId == tk.id ? taskNotes.notes : []), me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
                 else if pending(tasks)
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="task-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Task", message="Couldn’t load this task. Try again.")
                       button press=pullTasks testId="task-retry"
                         text "Try Again"
@@ -2554,9 +2622,9 @@ component App
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
                     SignIn(error=authError, pendingAuth=(pending(authReply)), signIn=doSignIn, register=doRegister, server=serverAddr.server, fallback=serverAddr.fallback, saved=serverAddr.saved, registration=authOptions.registration, demoEmail=authOptions.demoEmail, demoPassword=authOptions.demoPassword, saveServer=doServer, serverError=serverError, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths)
                 else
-                  column navigationKey=`${e.id}` navigationScroll=`content-${e.id}` position="absolute" inset=0
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column" contextPopover="empty-cal-menu"
-                    header display="flex" align-items="center" gap=8 padding="8px 16px"
+                    header display="flex" align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
                       if not wide
                         button popovertarget="persona-menu" aria-label=`Signed in as ${shown}` testId="persona-calendar"
                           image "symbol:person"
@@ -2678,14 +2746,14 @@ component App
               if e.name == "eventDetail"
                 if eventsSame
                   for ev in detailEvents.filter(x => x.id == e.params.id) key=`${ev.id}-${ev.startTime}`
-                    column navigationKey=`${e.id}` navigationScroll="event-edit" position="absolute" inset=0 display="flex" flex-direction="column"
+                    column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll="event-edit" position="absolute" inset=0 display="flex" flex-direction="column"
                       EventEditor(route=e.id, ev=ev, creating=false, initialDay=activeDay, today=today, nowMs=todayMs, offset=time.utcOffset, calendars=calendars.calendars, save=saveEvent, remove=askDeleteEvent, cancel=back, error=eventSaveError, saving=(pending(eventSaved)))
                 else if pending(view)
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
                       progress aria-label="Loading" testId="event-loading"
                 else
-                  column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column"
+                  column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     EmptyState(symbol="symbol:alert", title="Can’t Load Event", message="Couldn’t load this event. Try again.")
                       button press=pullEvents testId="event-retry"
                         text "Try Again"
@@ -2875,6 +2943,18 @@ component App
         button press=removeTaskNow destructive=true commandfor="delete-task" command="close" testId="delete-task-confirm"
           text "Delete"
         button commandfor="delete-task" command="close" testId="delete-task-cancel"
+          text "Cancel"
+      dialog id="delete-task-ctx" role="alertdialog" aria-label="Delete Task?"
+        text "The task and its subtasks move away. This can’t be undone."
+        button press=ctxDeleteNow destructive=true commandfor="delete-task-ctx" command="close" testId="ctx-delete-confirm"
+          text "Delete"
+        button commandfor="delete-task-ctx" command="close" testId="ctx-delete-cancel"
+          text "Cancel"
+      dialog id="delete-subtask" role="alertdialog" aria-label="Delete Subtask?"
+        text "The subtask is removed. This can’t be undone."
+        button press=deleteSubtaskNow destructive=true commandfor="delete-subtask" command="close" testId="subtask-delete-confirm"
+          text "Delete"
+        button commandfor="delete-subtask" command="close" testId="subtask-delete-cancel"
           text "Cancel"
       dialog id="ai-unavailable" role="alertdialog" aria-label="Apple Intelligence Unavailable"
         text aiMessage testId="ai-unavailable-message"
@@ -3343,6 +3423,9 @@ component TaskEditor
   state noteDraft = ""
   action editNoteDraft(v: string)
     noteDraft = v
+  // Taps on the row around the field (inside a list a field only takes focus from its own tap): focus it.
+  action focusNoteDraft
+    focus("task-note-draft")
   action submitNote
     postNote(task.id, noteDraft)
     noteDraft = ""
@@ -3519,7 +3602,7 @@ component TaskEditor
                   text "Notes" testId="task-notes-header"
                 for n in noteRows key=n.id
                   row gap=10 align-items="flex-start" testId=`task-note-${n.id}`
-                    Avatar(size=28, name=n.name, icon=n.icon, color=n.color, photoUrl="", fetched=fetched, testId=`task-note-avatar-${n.id}`, show=true)
+                    Avatar(size=28, name=n.name, icon=n.icon, color=n.color, photoUrl=n.photo, fetched=fetched, testId=`task-note-avatar-${n.id}`, show=true)
                     column flex=1 min-width=0 gap=2
                       row gap=6 align-items="baseline"
                         text (n.name == "" ? "You" : n.name) font="-exact-subheadline" line-clamp=1 testId=`task-note-author-${n.id}`
@@ -3528,8 +3611,8 @@ component TaskEditor
                     if n.name == "" or n.email == me
                       button press=dropNote(task.id, n.id) appearance="none" aria-label="Delete note" testId=`task-note-delete-${n.id}`
                         image "symbol:delete"
-                row gap=8 align-items="flex-end"
-                  textarea value=noteDraft input=editNoteDraft placeholder="Add a note" aria-label="New note" rows=2 testId="task-note-draft" flex=1 min-width=0 white-space="pre-wrap" overflow-wrap="anywhere" outline="none" field-sizing="content" overflow-y="hidden" padding="8px 0"
+                row press=focusNoteDraft gap=8 align-items="flex-end" width="100%" min-width=0
+                  textarea id="task-note-draft" value=noteDraft input=editNoteDraft placeholder="Add a note" aria-label="New note" rows=2 testId="task-note-draft" flex=1 min-width=0 white-space="pre-wrap" overflow-wrap="anywhere" outline="none" field-sizing="content" overflow-y="hidden" min-height="2.5rem" padding="8px 0"
                   button press=submitNote disabled=(noteDraft.trim() == "") testId="task-note-add"
                     text "Add"
           if col != "right"
@@ -3893,6 +3976,7 @@ component NoteBlocks
 
 component NoteEditor
   props
+    wide: bool
     route: number
     noteId: string
     title: string
@@ -4015,10 +4099,11 @@ component NoteEditor
   action pickTag(tag: string)
     editTags((tagOthers.length > 0 ? tagOthers.join(", ") + ", " : "") + tag + ", ")
   view
-    column navigationKey=`${route}` position="absolute" inset=0
+    column navigationKey=`${route}` position="absolute" inset=0 box-sizing="border-box" padding-top=(wide ? 44 : 0)
       display="flex" flex-direction="column"
-      header display=(chromeHidden ? "none" : "flex") align-items="center" gap=8 padding="8px 16px"
-        text (mode == "edit" ? "Edit Note" : "View Note") role="heading" aria-level=2 flex=1 font-size="min(-exact-title3, 31px)"
+      header display=(chromeHidden ? "none" : "flex") align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
+        if not wide
+          text (mode == "edit" ? "Edit Note" : "View Note") role="heading" aria-level=2 flex=1 font-size="min(-exact-title3, 31px)"
         button press=toggleVault aria-label=(vault ? "Turn off vault" : "Make a vault note") testId="note-vault" color=(vault ? "AccentColor" : "-exact-label")
           image "symbol:lock"
         button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin"
@@ -4173,9 +4258,7 @@ component DesktopSidebar
     toggleFold: action
   view
     column testId="sidebar" width="21rem" height="100%" flex-shrink=0 box-sizing="border-box" padding=12 gap=6 display="flex" flex-direction="column" background-color="light-dark(#eef1f6, #1a1c21)"
-      row testId="sidebar-brand" gap=8 align-items="center" padding="4px 8px 10px"
-        image "assets/notient.svg" width=28 height=28 aria-label="Notient"
-        text "Notient" font="-exact-headline"
+      view testId="sidebar-top" height=32 flex-shrink=0
       scroll flex="1 1 0%" min-height=0 overflow-y="auto"
         column gap=10
           column gap=4

@@ -5,6 +5,12 @@
 ## Overview
 Root `main` reports its width (`resize=onWinResize`) into state `winW`; `derive wide = winW >= 900`. Wide: row layout `[DesktopSidebar 21rem][content column flex=1]`, native `tabs` tablist `display="none"`. Narrow (<900): unchanged column, tablist as bottom tab bar (screenshot at 390x844 byte-identical to pre-change).
 
+## Title bar (wide, signed in)
+- `app.json` `display_override: ["window-controls-overlay"]`, `main viewport-fit="cover"`; every route root says `navigationBar=(wide ? "none" : "auto")`, so the platform's back/forward bar is gone on wide windows and phones keep theirs.
+- Own row `titlebar` (38 px, absolute, z-index 10), left inset `env(titlebar-area-x)` + 8 clears the traffic lights; content column `margin-top=38`.
+- Contents: `sidebar-toggle` (state `sideOpen`), "Notient", crumbs. Tasks: `Tasks / Folder / List` (on a list); Notes: `Notes / Folder / Note / View|Edit` (on a note; `crumb-mode` runs `crumbMode` = startEdit / saveAndClose); Calendar: none. `crumbHome` opens the tab home (no folder view yet).
+- The board's own list title row shows on phones only (`if not wide`).
+
 ## Key Details
 - **State:** `winW = 0` (until first resize); `derive wide`.
 - **Resources:**
@@ -23,12 +29,12 @@ Root `main` reports its width (`resize=onWinResize`) into state `winW`; `derive 
   - `openRecentTask(listId, id)` → `push(open(nav, /tasks/listId), /task/id)` (`taskDetail` reads `openList`).
   - `follow`: `/event/` urls → `open` (so the calendar lands in its own tab); other urls unchanged.
 - **Refresh:** `recentTasks` on taskSaved, taskDeleted, taskMoved, taskDropped, taskReordered, taskToggled, sectionTaskAdded, listQuickAdded, newTaskAdded, listDeleted, authReply. `recentEvents` on eventAdded, eventSaved, eventDeleted, calendarDeleted, authReply.
-- **Headers:** `Avatar` (testId `avatar-mobile`, `show=(not wide)`) and `persona*` buttons `display=(wide ? "none" : "flex")`; header keeps actions + flex spacer. The sidebar brand (`sidebar-brand`) stays the Notient logo.
+- **Headers:** `Avatar` (testId `avatar-mobile`, `show=(not wide)`) and `persona*` buttons `display=(wide ? "none" : "flex")`; header keeps actions + flex spacer. No brand block: the sidebar starts with a 32 px spacer (`sidebar-top`) under the title bar.
 - **User:** `sidebar-user` (`Avatar` 32px, testId `sidebar-avatar`, + name + email) → `popovertarget="persona-menu"`; shown only when signed in.
 - **Layout units:** sidebar `width="21rem"` (rem avoids `lower-text-px-width`).
 
 ## TestIds
-`sidebar`, `sidebar-brand`, `side-tab-notes|tasks|calendar`, `side-notes-fold|tasks-fold`, `side-new-note`, `side-trash`, `side-search`, `side-sort`, `side-notes-tree|tasks-tree`, `side-notes-more|tasks-more`, `side-notes-empty|tasks-empty`, `side-new-list`, `side-new-folder`, `side-folder-pop|draft|error`, `side-add-folder`, `side-folder-<name>` (notes folder), `side-task-folder-<id>`, `side-list-<id>`, `side-list-fold-<id>`, `side-note-<id>` (button), `side-task-<id>` (button), `side-event-<id>` (link, "Mon 16" + title), `sidebar-user`.
+`sidebar`, `sidebar-top`, `titlebar`, `sidebar-toggle`, `crumb-section|folder|leaf|mode`, `side-tab-notes|tasks|calendar`, `side-notes-fold|tasks-fold`, `side-new-note`, `side-trash`, `side-search`, `side-sort`, `side-notes-tree|tasks-tree`, `side-notes-more|tasks-more`, `side-notes-empty|tasks-empty`, `side-new-list`, `side-new-folder`, `side-folder-pop|draft|error`, `side-add-folder`, `side-folder-<name>` (notes folder), `side-task-folder-<id>`, `side-list-<id>`, `side-list-fold-<id>`, `side-note-<id>` (button), `side-task-<id>` (button), `side-event-<id>` (link, "Mon 16" + title), `sidebar-user`.
 
 ## Breakpoint & Why Custom
 - 900px: `wide` threshold (exact's own automatic sidebar also starts at 900px web, Mac always).

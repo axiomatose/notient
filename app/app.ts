@@ -989,8 +989,8 @@ const sources: Sources = {
     if (owner === '' || taskId === '') return { owner, taskId, notes: [] };
     const r = await callWith(store, `/tasks/${encodeURIComponent(taskId)}/notes`);
     if (!r.ok) throw new Error(r.error);
-    const rows = (r.body as { notes?: { id: string; body: string; createdAt: number; userId: string; author?: { name?: string; email?: string; avatarIcon?: string | null; avatarColor?: string | null } }[] }).notes ?? [];
-    return { owner, taskId, notes: rows.map((n) => ({ id: n.id, body: n.body, createdAt: n.createdAt, userId: n.userId, name: n.author?.name || n.author?.email || '', email: n.author?.email ?? '', icon: n.author?.avatarIcon ?? '', color: n.author?.avatarColor ?? '' })) };
+    const rows = (r.body as { notes?: { id: string; body: string; createdAt: number; userId: string; author?: { name?: string; email?: string; avatarIcon?: string | null; avatarColor?: string | null; avatarUrl?: string | null; avatarUpdatedAt?: number | null } }[] }).notes ?? [];
+    return { owner, taskId, notes: rows.map((n) => ({ id: n.id, body: n.body, createdAt: n.createdAt, userId: n.userId, name: n.author?.name || n.author?.email || '', email: n.author?.email ?? '', icon: n.author?.avatarIcon ?? '', color: n.author?.avatarColor ?? '', photo: n.author?.avatarUrl ? `${n.author.avatarUrl}?v=${n.author.avatarUpdatedAt ?? 0}` : '' })) };
   },
   addTaskNote: async ([taskId, body], store) =>
     reply(await callWith(store, `/tasks/${encodeURIComponent(taskId)}/notes`, { method: 'POST', body: JSON.stringify({ body }) })),
@@ -1517,7 +1517,7 @@ export const overlay: Overlay = (source, args, answer, writes) => {
       let notes = [...got.notes];
       for (const w of ws) {
         const a = w.args as unknown[];
-        if (w.source === 'addTaskNote' && a[0] === taskId && !w.answered) notes.push({ id: `pending-${w.id}`, body: String(a[1]), createdAt: 0, userId: '', name: '', email: '', icon: '', color: '' });
+        if (w.source === 'addTaskNote' && a[0] === taskId && !w.answered) notes.push({ id: `pending-${w.id}`, body: String(a[1]), createdAt: 0, userId: '', name: '', email: '', icon: '', color: '', photo: '' });
         else if (w.source === 'removeTaskNote' && a[0] === taskId) notes = notes.filter((n) => n.id !== a[1]);
       }
       return { ...got, notes } as never;

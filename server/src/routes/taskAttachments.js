@@ -3,6 +3,7 @@ import multer from "multer";
 import { nanoid } from "nanoid";
 import { HttpError } from "../errors.js";
 import logger from "../utils/logger.js";
+import { createListAccess } from "../lib/listAccess.js";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_MIME_TYPES = new Set([
@@ -29,6 +30,16 @@ const upload = multer({
 
 export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
   const router = Router();
+  const access = createListAccess(repos);
+
+  // The task, if this person may see it (or change it, when `writing`): its owner, or someone its list is shared with.
+  function taskFor(taskId, me, writing) {
+    const task = repos.tasks.findAnyById(taskId);
+    const shared = task ? access.forTask(taskId, me) : null;
+    if (!task || (!shared && task.userId !== me)) throw new HttpError(404, "Task not found", "task_not_found");
+    if (shared && writing && !shared.write) throw new HttpError(403, "Access denied", "access_denied");
+    return task;
+  }
 
   // Get attachments for a task
   router.get("/task/:taskId", requireAuth, async (req, res, next) => {
@@ -37,17 +48,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
       const { type } = req.query;
       
       // First verify user has access to task
-      const task = await repos.tasks.findById({ userId: req.auth.userId, id: taskId });
-      if (!task) {
-        throw new HttpError(404, "Task not found", "task_not_found");
-      }
-      
-      if (task.userId !== req.auth.userId) {
-        const permission = await repos.taskShares.canUserAccessTask(taskId, req.auth.userId);
-        if (!permission) {
-          throw new HttpError(403, "Access denied", "access_denied");
-        }
-      }
+      const task = taskFor(taskId, req.auth.userId, false);
 
       const attachments = await repos.taskAttachments.findByTaskId(taskId, type || null);
       res.json({ attachments });
@@ -70,17 +71,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
         }
 
         // First verify user has edit access to task
-        const task = await repos.tasks.findById({ userId: req.auth.userId, id: taskId });
-        if (!task) {
-          throw new HttpError(404, "Task not found", "task_not_found");
-        }
-        
-        if (task.userId !== req.auth.userId) {
-          const permission = await repos.taskShares.canUserAccessTask(taskId, req.auth.userId);
-          if (!permission || permission === 'view') {
-            throw new HttpError(403, "Access denied", "access_denied");
-          }
-        }
+        const task = taskFor(taskId, req.auth.userId, true);
 
         // Generate unique filename with original extension
         const fileExtension = req.file.originalname.split(".").pop();
@@ -139,17 +130,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
         }
 
         // First verify user has edit access to task
-        const task = await repos.tasks.findById({ userId: req.auth.userId, id: taskId });
-        if (!task) {
-          throw new HttpError(404, "Task not found", "task_not_found");
-        }
-        
-        if (task.userId !== req.auth.userId) {
-          const permission = await repos.taskShares.canUserAccessTask(taskId, req.auth.userId);
-          if (!permission || permission === 'view') {
-            throw new HttpError(403, "Access denied", "access_denied");
-          }
-        }
+        const task = taskFor(taskId, req.auth.userId, true);
 
         // Generate unique filename with original extension
         const fileExtension = req.file.originalname.split(".").pop();
@@ -197,17 +178,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
       }
 
       // First verify user has edit access to task
-      const task = await repos.tasks.findById({ userId: req.auth.userId, id: taskId });
-      if (!task) {
-        throw new HttpError(404, "Task not found", "task_not_found");
-      }
-      
-      if (task.userId !== req.auth.userId) {
-        const permission = await repos.taskShares.canUserAccessTask(taskId, req.auth.userId);
-        if (!permission || permission === 'view') {
-          throw new HttpError(403, "Access denied", "access_denied");
-        }
-      }
+      const task = taskFor(taskId, req.auth.userId, true);
 
       // Update task with location
       await repos.tasks.update(taskId, {
@@ -252,17 +223,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
       }
 
       // Verify user has edit access to task
-      const task = await repos.tasks.findById({ userId: req.auth.userId, id: attachment.taskId });
-      if (!task) {
-        throw new HttpError(404, "Task not found", "task_not_found");
-      }
-      
-      if (task.userId !== req.auth.userId) {
-        const permission = await repos.taskShares.canUserAccessTask(attachment.taskId, req.auth.userId);
-        if (!permission || permission === 'view') {
-          throw new HttpError(403, "Access denied", "access_denied");
-        }
-      }
+      const task = taskFor(attachment.taskId, req.auth.userId, true);
 
       // Update task location
       await repos.tasks.update(attachment.taskId, {
@@ -297,17 +258,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
       }
 
       // Verify user has edit access to task
-      const task = await repos.tasks.findById({ userId: req.auth.userId, id: attachment.taskId });
-      if (!task) {
-        throw new HttpError(404, "Task not found", "task_not_found");
-      }
-      
-      if (task.userId !== req.auth.userId) {
-        const permission = await repos.taskShares.canUserAccessTask(attachment.taskId, req.auth.userId);
-        if (!permission || permission === 'view') {
-          throw new HttpError(403, "Access denied", "access_denied");
-        }
-      }
+      const task = taskFor(attachment.taskId, req.auth.userId, true);
 
       // Delete stored file if it is an image or file
       if (attachment.type === 'image' || attachment.type === 'file') {
@@ -332,17 +283,7 @@ export function createTaskAttachmentsRouter({ repos, requireAuth, storage }) {
       const { taskId } = req.params;
       
       // Verify user has access to task
-      const task = await repos.tasks.findById({ userId: req.auth.userId, id: taskId });
-      if (!task) {
-        throw new HttpError(404, "Task not found", "task_not_found");
-      }
-      
-      if (task.userId !== req.auth.userId) {
-        const permission = await repos.taskShares.canUserAccessTask(taskId, req.auth.userId);
-        if (!permission) {
-          throw new HttpError(403, "Access denied", "access_denied");
-        }
-      }
+      const task = taskFor(taskId, req.auth.userId, false);
 
       const stats = await repos.taskAttachments.getAttachmentStats(taskId);
       res.json({ stats });

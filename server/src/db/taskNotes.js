@@ -9,7 +9,7 @@ import { nanoid } from "nanoid";
 export function createTaskNotesRepository(db) {
   const listStmt = db.prepare(`
     SELECT n.id, n.task_id, n.user_id, n.body, n.created_at,
-           u.email, u.display_name, u.avatar_icon, u.avatar_color
+           u.email, u.display_name, u.avatar_icon, u.avatar_color, u.avatar_url, u.avatar_updated_at
     FROM task_notes n
     LEFT JOIN users u ON u.id = n.user_id
     WHERE n.task_id = ?
@@ -17,7 +17,7 @@ export function createTaskNotesRepository(db) {
   `);
   const oneStmt = db.prepare(`
     SELECT n.id, n.task_id, n.user_id, n.body, n.created_at,
-           u.email, u.display_name, u.avatar_icon, u.avatar_color
+           u.email, u.display_name, u.avatar_icon, u.avatar_color, u.avatar_url, u.avatar_updated_at
     FROM task_notes n
     LEFT JOIN users u ON u.id = n.user_id
     WHERE n.id = ?
@@ -39,6 +39,8 @@ export function createTaskNotesRepository(db) {
       email: row.email ?? "",
       avatarIcon: row.avatar_icon ?? null,
       avatarColor: row.avatar_color ?? null,
+      avatarUrl: row.avatar_url ?? null,
+      avatarUpdatedAt: row.avatar_updated_at ?? null,
     },
   });
 
