@@ -84,6 +84,8 @@
 - **Mobile components, layouts** → [styles/mobile.md](styles/mobile.md)
 - **Large screen layouts** → [styles/largescreens.md](styles/largescreens.md)
 - **Desktop sidebar (≥900px), window width, Notes and Tasks trees (fold, fixed height + Show more)** → [frontend/pages/desktop-sidebar.md](frontend/pages/desktop-sidebar.md)
+- **Templates (start a note/list from a built-in or saved template, save as template, templates table)** → [frontend/pages/templates.md](frontend/pages/templates.md), [backend/database.md](backend/database.md)
+- **Import / drop zones (drop images on a note or task, Markdown files and folders become notes)** → [frontend/pages/import.md](frontend/pages/import.md)
 
 ## Deployment
 - **Project overview, stack** → [README.md](README.md)

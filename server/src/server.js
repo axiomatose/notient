@@ -28,6 +28,7 @@ import { createShareableLinksRouter } from "./routes/shareableLinks.js";
 import { createImportExportRouter } from "./routes/import-export.js";
 import { createPublicRouter } from "./routes/public.js";
 import { createTaskListFoldersRouter } from "./routes/tasklistFolders.js";
+import { createTemplatesRouter } from "./routes/templates.js";
 import { createCalendarsRouter } from "./routes/calendars.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { createSharesRouter } from "./routes/shares.js";
@@ -109,6 +110,12 @@ export async function buildApp({ config, db }) {
   app.use(compression());
 
   const repos = createRepositories(db, config);
+  try {
+    const moved = repos.notes.migrateLayout();
+    if (moved > 0) console.log(`notes: moved ${moved} file(s) into the folder layout`);
+  } catch (e) {
+    console.error("notes: layout migration failed", e);
+  }
 
   const requireAuth = createAuthMiddleware({ config, repos });
 
@@ -314,6 +321,7 @@ export async function buildApp({ config, db }) {
       notificationService,
     }),
   );
+  app.use("/templates", createTemplatesRouter({ repos, requireAuth }));
   app.use(
     "/tasklist-folders",
     createTaskListFoldersRouter({

@@ -629,4 +629,20 @@ export const MIGRATIONS = [
         FROM tasks WHERE notes IS NOT NULL AND TRIM(notes) != '';
     `,
   },
+  {
+    id: 37,
+    name: "add_templates",
+    up: `
+      CREATE TABLE IF NOT EXISTS templates (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('note', 'list')),
+        name TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id, kind, created_at);
+    `,
+  },
 ];

@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, renameSync, rmdirSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import TurndownService from "turndown";
 import { marked } from "marked";
 import { stringifyJsonArray, parseJsonArray, integerToBoolean, booleanToInteger, coerceNullableNumber } from "./utils.js";
@@ -201,16 +201,43 @@ export function createNotesRepository(db, config) {
     ORDER BY updated_at ASC
   `);
 
-  function getNotePath(userId, noteId) {
+  // On disk: notes/<user>/<folder>/<subfolder>/<noteId>.md, one whole Markdown file per note. The file name stays
+  // the note id (titles repeat and change); a note's folder ("A/B", nested with "/") is its directory. Notes saved
+  // before the layout (notes/<user>/<noteId>.md) are still found and move on the next save or `migrateLayout`.
+  const folderParts = (folder) =>
+    String(folder ?? "")
+      .split("/")
+      .map((p) => p.replace(/[\\:*?"<>|\u0000-\u001f]/g, " ").trim().replace(/[. ]+$/, "").slice(0, 80))
+      .filter((p) => p !== "" && p !== "." && p !== "..");
+
+  function getNotePath(userId, noteId, folder) {
     if (!config?.notesDir) return null;
-    return join(config.notesDir, userId, `${noteId}.md`);
+    return join(config.notesDir, userId, ...folderParts(folder), `${noteId}.md`);
   }
 
-  function readMarkdown(userId, noteId) {
+  function legacyNotePath(userId, noteId) {
+    return config?.notesDir ? join(config.notesDir, userId, `${noteId}.md`) : null;
+  }
+
+  // Removes the directories a move or delete left empty, up to (not including) the user's own directory.
+  function pruneEmpty(userId, folder) {
+    if (!config?.notesDir) return;
+    const parts = folderParts(folder);
+    for (let n = parts.length; n > 0; n--) {
+      const dir = join(config.notesDir, userId, ...parts.slice(0, n));
+      try {
+        if (readdirSync(dir).length === 0) rmdirSync(dir);
+        else break;
+      } catch {
+        break;
+      }
+    }
+  }
+
+  function readMarkdown(userId, noteId, folder) {
     try {
-      const p = getNotePath(userId, noteId);
-      if (p && existsSync(p)) {
-        return readFileSync(p, "utf8");
+      for (const p of [getNotePath(userId, noteId, folder), legacyNotePath(userId, noteId)]) {
+        if (p && existsSync(p)) return readFileSync(p, "utf8");
       }
     } catch (e) {
       // ignore
@@ -219,18 +246,35 @@ export function createNotesRepository(db, config) {
   }
 
   // Verbatim write: the file is the source of truth for `bodyMarkdown`.
-  function writeMarkdown(userId, noteId, md) {
+  function writeMarkdown(userId, noteId, md, folder) {
     try {
-      if (!config?.notesDir) return;
-      const p = getNotePath(userId, noteId);
-      const dir = join(config.notesDir, userId);
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const p = getNotePath(userId, noteId, folder);
+      if (!p) return;
+      mkdirSync(dirname(p), { recursive: true });
       writeFileSync(p, md, "utf8");
+      const legacy = legacyNotePath(userId, noteId);
+      if (legacy && legacy !== p && existsSync(legacy)) unlinkSync(legacy);
     } catch (e) { console.error("Write error", e); }
   }
 
+  // A note changed folder: its file follows (the legacy location counts as the old one).
+  function moveMarkdown(userId, noteId, fromFolder, toFolder) {
+    try {
+      const to = getNotePath(userId, noteId, toFolder);
+      if (!to) return;
+      for (const from of [getNotePath(userId, noteId, fromFolder), legacyNotePath(userId, noteId)]) {
+        if (from && from !== to && existsSync(from)) {
+          mkdirSync(dirname(to), { recursive: true });
+          renameSync(from, to);
+          pruneEmpty(userId, fromFolder);
+          return;
+        }
+      }
+    } catch (e) { console.error("Move error", e); }
+  }
+
   // Legacy HTML body -> Markdown file (turndown).
-  function writeContent(userId, noteId, html) {
+  function writeContent(userId, noteId, html, folder) {
     let md;
     try {
       md = turndownService.turndown(html || "");
@@ -238,18 +282,32 @@ export function createNotesRepository(db, config) {
       console.error("Write error", e);
       return;
     }
-    writeMarkdown(userId, noteId, md);
+    writeMarkdown(userId, noteId, md, folder);
   }
 
   // Attaches `bodyMarkdown` (raw file) and `body` (HTML via marked, legacy web client).
   function hydrateBody(note) {
-    const md = readMarkdown(note.userId, note.id);
+    const md = readMarkdown(note.userId, note.id, note.folder);
     note.bodyMarkdown = md;
     note.body = marked.parse(md);
     return note;
   }
 
   return {
+    // Moves every note still in the old flat layout into its folder directory (idempotent; returns how many moved).
+    migrateLayout() {
+      let moved = 0;
+      for (const r of db.prepare("SELECT id, user_id AS userId, folder FROM notes").all()) {
+        const legacy = legacyNotePath(r.userId, r.id);
+        const to = getNotePath(r.userId, r.id, r.folder);
+        if (legacy && to && legacy !== to && existsSync(legacy) && !existsSync(to)) {
+          mkdirSync(dirname(to), { recursive: true });
+          renameSync(legacy, to);
+          moved++;
+        }
+      }
+      return moved;
+    },
     list({ userId, includeDeleted = false }) {
       const rows = listStmt.all({
         userId,
@@ -295,9 +353,9 @@ export function createNotesRepository(db, config) {
 
       // bodyMarkdown wins over the legacy HTML body when present.
       if (typeof data.bodyMarkdown === "string") {
-        writeMarkdown(userId, normalized.raw.id, data.bodyMarkdown);
+        writeMarkdown(userId, normalized.raw.id, data.bodyMarkdown, normalized.raw.folder);
       } else {
-        writeContent(userId, normalized.raw.id, normalized.realBody);
+        writeContent(userId, normalized.raw.id, normalized.realBody, normalized.raw.folder);
       }
 
       insertStmt.run(normalized.raw);
@@ -344,12 +402,15 @@ export function createNotesRepository(db, config) {
       };
       
       // bodyMarkdown wins over the legacy HTML body when present.
+      const owner = current.user_id ?? userId;
+      // The file follows a folder change first; a body in the same request then lands in its new place.
+      if (current.folder !== newRow.folder) moveMarkdown(owner, id, current.folder, newRow.folder);
       if (typeof data.bodyMarkdown === "string") {
-        writeMarkdown(userId, id, data.bodyMarkdown);
+        writeMarkdown(owner, id, data.bodyMarkdown, newRow.folder);
       } else if (data.body !== undefined) {
-        writeContent(userId, id, data.body);
+        writeContent(owner, id, data.body, newRow.folder);
       }
-      
+
       updateStmt.run(newRow);
       return this.findById({ userId, id });
     },
@@ -366,7 +427,7 @@ export function createNotesRepository(db, config) {
       const apply = db.transaction(() => {
         // write body if present
         if (record.body !== undefined) {
-             writeContent(userId, raw.id, realBody);
+             writeContent(userId, raw.id, realBody, raw.folder);
         }
         // Check if note exists globally first
         const globalExisting = findByIdOnlyStmt.get(raw.id);
@@ -440,11 +501,11 @@ export function createNotesRepository(db, config) {
     deletePermanently({ userId, id }) {
       // Delete the file first
       try {
-        const p = getNotePath(userId, id);
-        if (p && existsSync(p)) {
-          // unlinkSync is imported at top level now
-          unlinkSync(p);
+        const row = db.prepare("SELECT folder FROM notes WHERE id = ? AND user_id = ?").get(id, userId);
+        for (const p of [getNotePath(userId, id, row?.folder), legacyNotePath(userId, id)]) {
+          if (p && existsSync(p)) unlinkSync(p);
         }
+        pruneEmpty(userId, row?.folder);
       } catch (e) {
         console.error("Error deleting file:", e);
       }

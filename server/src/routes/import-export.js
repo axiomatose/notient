@@ -1,11 +1,7 @@
 import { Router } from "express";
-import { ZipArchive } from "archiver";
 import multer from "multer";
 import AdmZip from "adm-zip";
-import { marked } from "marked";
 import { nanoid } from "nanoid";
-import { join } from "node:path";
-import { existsSync, createReadStream } from "node:fs";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -13,52 +9,7 @@ export function createImportExportRouter({ repos, requireAuth, config }) {
   const router = Router();
   router.use(requireAuth);
 
-  router.get("/export", async (req, res) => {
-    try {
-      const { userId } = req.auth;
-      const notes = repos.notes.list({ userId, includeDeleted: false });
-
-      res.attachment("notes_export.zip");
-      const archive = new ZipArchive({
-        zlib: { level: 9 },
-      });
-
-      archive.pipe(res);
-
-      const usedNames = new Set();
-
-      for (const note of notes) {
-        // Construct filename
-        let filename = (note.title || "Untitled").replace(/[^a-z0-9_\-\.]/gi, "_");
-        if (filename.length === 0) filename = "Untitled";
-        
-        let finalName = filename;
-        let counter = 1;
-        while (usedNames.has(finalName)) {
-          finalName = `${filename}_${counter}`;
-          counter++;
-        }
-        usedNames.add(finalName);
-
-        // Read file directly from FS to avoid HTML conversion
-        if (config.notesDir) {
-           const filePath = join(config.notesDir, userId, `${note.id}.md`);
-           if (existsSync(filePath)) {
-             archive.file(filePath, { name: `${finalName}.md` });
-           } else {
-             // If file missing (shouldn't happen), assume empty or database only?
-             // Maybe write a text buffer?
-             archive.append("", { name: `${finalName}.md` });
-           }
-        }
-      }
-
-      await archive.finalize();
-    } catch (error) {
-      console.error("Export error:", error);
-      res.status(500).json({ error: "export_failed" });
-    }
-  });
+  // Export lives in routes/notes.js (GET /notes/export and /notes/:id/export), laid out like the folders.
 
   router.post("/import", upload.single("file"), async (req, res) => {
     try {
@@ -72,27 +23,28 @@ export function createImportExportRouter({ repos, requireAuth, config }) {
       let importedCount = 0;
       const filename = req.file.originalname;
 
-      // Helper to process a single markdown string
-      const processMarkdown = async (markdown, title) => {
-        // Convert MD to HTML for the API contract
-        // The repository will convert it back to MD for storage
-        const html = await marked.parse(markdown);
+      // One Markdown file becomes one note: the first "# Heading" is the title, else the file name. The text is kept
+      // as written (no HTML round trip) and `folder` is the zip's directory path ("" for a single file).
+      const processMarkdown = (markdown, name, folder) => {
+        const text = markdown.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+        const m = /^(?:\s*\n)*#[ \t]+(.+?)[ \t#]*\n?/.exec(text);
+        const title = (m && m[1].trim() !== "" ? m[1].trim() : name.replace(/\.(md|markdown)$/i, "").trim() || "Untitled").slice(0, 200);
+        const body = m && m[1].trim() !== "" ? text.slice(m[0].length).replace(/^\n+/, "") : text;
         const timestamp = Date.now();
-        
-        await repos.notes.create({
+        repos.notes.create({
           userId,
           deviceId: deviceId || "import",
           data: {
             title,
-            body: html,
+            bodyMarkdown: body,
             isPinned: false,
             tags: [],
-            folder: "Imported",
+            ...(folder !== "" ? { folder } : {}),
             createdAt: timestamp,
             updatedAt: timestamp,
             version: 1,
             id: nanoid(),
-          }
+          },
         });
       };
 
@@ -101,21 +53,15 @@ export function createImportExportRouter({ repos, requireAuth, config }) {
         const zipEntries = zip.getEntries();
 
         for (const entry of zipEntries) {
-          if (entry.isDirectory || !entry.name.toLowerCase().endsWith(".md")) {
+          if (entry.isDirectory || !/\.(md|markdown)$/i.test(entry.name) || entry.name.startsWith(".") || entry.entryName.startsWith("__MACOSX/")) {
             continue;
           }
-
-          const markdown = entry.getData().toString("utf8");
-          const title = entry.name.replace(/\.md$/i, "");
-          
-          await processMarkdown(markdown, title);
+          const dirs = entry.entryName.split("/").slice(0, -1).filter((p) => p !== "" && p !== "." && p !== "..");
+          processMarkdown(entry.getData().toString("utf8"), entry.name, dirs.join("/").slice(-120));
           importedCount++;
         }
-      } else if (filename.toLowerCase().endsWith(".md")) {
-        const markdown = req.file.buffer.toString("utf8");
-        const title = filename.replace(/\.md$/i, "");
-        
-        await processMarkdown(markdown, title);
+      } else if (/\.(md|markdown)$/i.test(filename)) {
+        processMarkdown(req.file.buffer.toString("utf8"), filename, "");
         importedCount = 1;
       } else {
         return res.status(400).json({ error: "invalid_file_type" });

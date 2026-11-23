@@ -244,6 +244,7 @@ const OWNED = [
   ["task_sections", "user_id = ?"],
   ["tasks", "user_id = ?"],
   ["task_notes", "user_id = ?"],
+  ["templates", "user_id = ?"],
   ["tasklist_folders", "user_id = ?"],
   ["calendars", "user_id = ?"],
   ["calendar_events", "calendar_id IN (SELECT id FROM calendars WHERE user_id = ?)"],

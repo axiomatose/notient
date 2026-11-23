@@ -35,6 +35,8 @@ export function createListAccess(repos) {
             displayName: u.displayName ?? u.display_name ?? null,
             avatarIcon: u.avatarIcon ?? u.avatar_icon ?? null,
             avatarColor: u.avatarColor ?? u.avatar_color ?? null,
+            avatarUrl: u.avatarUrl ?? u.avatar_url ?? null,
+            avatarUpdatedAt: u.avatarUpdatedAt ?? u.avatar_updated_at ?? null,
           }
         : null;
     };

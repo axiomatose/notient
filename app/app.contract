@@ -116,6 +116,18 @@ shape CreatedNote
   title: string
   body: string
 
+shape ImportReply
+  ok: bool
+  imported: number
+  skipped: number
+  error: string
+
+shape ExportReply
+  ok: bool
+  path: string
+  name: string
+  error: string
+
 shape ImageReply
   ok: bool
   url: string
@@ -154,6 +166,9 @@ shape Task
   version: number
   sortOrder: number
   subtaskCount: number
+  latestBody: string
+  latestBy: string
+  latestAt: number
   parentId: string
   assigneeId: string
   completedAt: number
@@ -165,6 +180,26 @@ shape Member
   email: string
   icon: string
   color: string
+  photo: string
+
+shape TemplateItem
+  id: string
+  name: string
+  blurb: string
+  builtin: bool
+  title: string
+  body: string
+  json: string
+
+shape Templates
+  owner: string
+  notes: TemplateItem[]
+  lists: TemplateItem[]
+
+shape ListMade
+  ok: bool
+  error: string
+  id: string
 
 shape Members
   owner: string
@@ -531,7 +566,7 @@ fn doneTasks(all: Task[], col: string): Task[] = all.filter(x => x.isDone and x.
 fn hasMeta(t: Task): bool = t.dueAt != 0 or t.recurrence != "none" or t.subtaskCount > 0 or t.tags.length > 0
 fn rowHeight(t: Task): number = 44 + (t.notes != "" ? 18 : 0) + (hasMeta(t) ? 18 : 0)
 fn rowsHeight(ts: Task[]): number = ts.length == 0 ? 36 : sum(ts.map(t => rowHeight(t)))
-fn memberOf(ms: Member[], id: string): Member = match first(ms.filter(m => m.id == id)) { case some(m) => m, case none => Member(id="", role="", name="", email="", icon="", color="") }
+fn memberOf(ms: Member[], id: string): Member = match first(ms.filter(m => m.id == id)) { case some(m) => m, case none => Member(id="", role="", name="", email="", icon="", color="", photo="") }
 // A board column shows as a sliver (icon, count, the name turned, a plus) when it is empty on a wide screen (unless opened), or on a
 // narrow one whenever it is not the open column. A board with no tasks at all keeps every column open.
 fn colShut(wide: bool, n: number, anyTasks: bool, open: string, shut: string, col: string, active: string): bool = wide ? (folded(shut, col) or (n == 0 and anyTasks and not folded(open, col))) : col != active
@@ -551,6 +586,8 @@ fn dueText(t: Task, todayMs: number, offset: number): string = t.dueHasTime ? fo
 fn isOverdue(t: Task, today: string, nowMs: number): bool = t.isDone == false and t.dueDay != "" and (t.dueDay < today or (t.dueDay == today and t.dueHasTime and t.dueAt < nowMs))
 fn reminderOf(t: Task): string = t.remindAt == 0 ? "none" : t.remindAt == t.dueAt ? "due" : t.dueAt - t.remindAt == 3600000 ? "1h" : t.dueAt - t.remindAt == 86400000 ? "1d" : "keep"
 fn matchesNote(n: Note, q: string): bool = q.trim() == "" or n.title.toLowerCase().includes(q.trim().toLowerCase()) or (not n.tags.includes("vault") and n.body.toLowerCase().includes(q.trim().toLowerCase())) or n.tags.join(",").toLowerCase().includes(q.trim().toLowerCase())
+fn lastSegment(p: string): string = match p.split("/").filter(x => x != "").at(-1) { case some(x) => x, case none => p }
+fn isImagePath(p: string): bool = [".png", ".jpg", ".jpeg", ".gif", ".webp"].filter(x => p.toLowerCase().endsWith(x)).length > 0
 fn folderLabel(f: string): string = f == "" ? "Unfiled" : f
 // Day timeline geometry: 56px per hour, positions and heights from minutes past local midnight.
 fn minutesPx(m: number): number = m * 56 / 60
@@ -798,7 +835,7 @@ component App
   derive newTaskListName = listOf(lists.lists, newTaskListId).name
   derive newTaskOpen = sheet == "newTask" or stack(nav).filter(e => e.name == "newTask").length > 0
   derive sectionsListId = openList != "" ? openList : newTaskOpen ? newTaskListId : ""
-  derive blankTask = Task(id="", title="", isDone=false, notes="", dueAt=0, dueDay="", dueTime="", dueHasTime=false, remindAt=0, flagged=false, recurrence="none", url="", priority=0, tags=[], sectionId="", version=0, sortOrder=0, subtaskCount=0, parentId="", assigneeId="", completedAt=0)
+  derive blankTask = Task(id="", title="", isDone=false, notes="", dueAt=0, dueDay="", dueTime="", dueHasTime=false, remindAt=0, flagged=false, recurrence="none", url="", priority=0, tags=[], sectionId="", version=0, sortOrder=0, subtaskCount=0, latestBody="", latestBy="", latestAt=0, parentId="", assigneeId="", completedAt=0)
   derive ctxNoteRow = match first(lib.notes.filter(x => x.id == ctxNote)) { case some(n) => n, case none => Note(id="", title="", body="", isPinned=false, tags=[], folder="", updatedAt=0, deletedAt=0, version=0) }
   derive ctxCalRow = calOf(calendars.calendars, ctxCal)
   derive ctxRow = match first(tasks.tasks.filter(x => x.id == ctxTask)) { case some(t) => t, case none => blankTask }
@@ -912,6 +949,7 @@ component App
   resource taskNotes = loadTaskNotes(openTask) as shape TaskNotes else empty()
   resource attachments = loadAttachments(openTask) as shape Attachments else empty()
   resource calendars = loadCalendars() as shape Calendars else empty()
+  resource templates = loadTemplates() as shape Templates else empty()
   // The live channel: a ticket for each attempt, then the socket it opens (see documentation/backend/collaboration.md).
   state liveAttempt = 0
   resource liveReady = liveTicket(liveAttempt) when liveAttempt > 0 and session.signedIn as shape number else empty()
@@ -946,13 +984,15 @@ component App
   mutation noteFate as shape Reply queue refreshes lib
   mutation noteDeleted as shape Reply queue refreshes lib
   mutation noteImage as shape ImageReply queue then imageInserted
+  mutation notesImported as shape ImportReply refreshes lib then afterImport
+  mutation exportMade as shape ExportReply then afterExport
   mutation linkCreated as shape LinkReply refreshes links then afterLinkCreate
   mutation linkRevoked as shape Reply refreshes links
   mutation personShared as shape Reply refreshes noteSharesRes
   mutation personUnshared as shape Reply refreshes noteSharesRes
   mutation taskSaved as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks, view, recentEvents then afterTaskSaved
-  mutation taskNoteAdded as shape Reply queue refreshes taskNotes
-  mutation taskNoteRemoved as shape Reply queue refreshes taskNotes
+  mutation taskNoteAdded as shape Reply queue refreshes taskNotes, tasks, sections
+  mutation taskNoteRemoved as shape Reply queue refreshes taskNotes, tasks, sections
   mutation taskDeleted as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks, recentTasks, view, recentEvents
   mutation sectionAdded as shape Reply queue refreshes sections, tasks then afterSectionAdd
   mutation subtaskAdded as shape Reply queue refreshes tasks, sections, subtasks, boardSubtasks
@@ -967,6 +1007,9 @@ component App
   mutation listUnsharedR as shape Reply refreshes listShares
   mutation taskImageR as shape ImageReply refreshes attachments
   mutation listAdded as shape Reply queue refreshes lists then afterListAdd
+  mutation templateSaved as shape Reply refreshes templates then afterTemplateSaved
+  mutation templateDeleted as shape Reply refreshes templates
+  mutation listMade as shape ListMade queue refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterListMade
   mutation noneRenamed as shape Reply queue refreshes lists then afterNoneRename
   mutation tasksSorted as shape Reply queue refreshes tasks, sections, recentTasks
   mutation sectionTaskAdded as shape Reply queue refreshes sections, tasks, boardSubtasks, recentTasks, view, recentEvents then afterSectionTaskAdd
@@ -1591,6 +1634,113 @@ component App
       send listSharedR = shareListWith(shareListId, shareEmail.trim(), sharePermission)
   action unshareListNow(id: string)
     send listUnsharedR = unshareList(id)
+  // Templates: a note's name when saved, a line of confirmation for a few seconds, the template waiting on delete.
+  state templateNotice = ""
+  state templateDelete = ""
+  // Phone dropdown: the open tab's templates, narrowed by a search box once there are more than six.
+  state tplQuery = ""
+  action setTplQuery(v: string)
+    tplQuery = v
+  derive tplAll = nav.tab == "tasks" ? templates.lists : templates.notes
+  derive tplShown = tplAll.filter(t => tplQuery.trim() == "" or t.name.toLowerCase().includes(tplQuery.trim().toLowerCase()))
+  task templateNoticeShown when templateNotice != "" key=templateNotice
+    after(4000, clearTemplateNotice)
+  action clearTemplateNotice
+    templateNotice = ""
+  action openNoteFromTemplate(title: string, body: string)
+    noteChromeHidden = false
+    noteLastY = 0
+    editorNoteId = ""
+    editorTitle = title
+    editorBody = body
+    editorFolder = ""
+    editorTagsText = ""
+    editorPinned = false
+    savedTitle = ""
+    savedBody = ""
+    savedFolder = ""
+    savedTags = ""
+    savedPinned = false
+    editorMode = "edit"
+    lastEdit = performanceNow()
+    nav = wide ? open(nav, "/new") : push(nav, "/new")
+  action saveNoteAsTemplate
+    if (editorTitle.trim() != "" or editorBody.trim() != "") and not pending(templateSaved)
+      templateNotice = `Saved “${editorTitle.trim() == "" ? "Untitled" : editorTitle.trim()}” as a template`
+      send templateSaved = saveNoteTemplate(editorTitle.trim() == "" ? "Untitled" : editorTitle.trim(), editorTitle, editorBody)
+  action saveListAsTemplate
+    if openList != "" and not pending(templateSaved)
+      templateNotice = `Saved “${listName(allLists, openList)}” as a template`
+      send templateSaved = saveListTemplate(openList, listName(allLists, openList))
+  // Files dropped on the window: images go to the open note or task, Markdown and text files (and folders of them) become notes.
+  state dropOver = false
+  action dropEntered
+    dropOver = true
+  action dropLeft
+    dropOver = false
+  action filesDropped(e: DragEvent)
+    dropOver = false
+    let imgs = e.files.filter(p => isImagePath(p))
+    let rest = e.files.filter(p => not isImagePath(p))
+    if imgs.length > 0 and crumbOnNote and not pending(noteImage)
+      imageChosen(imgs.map(p => lastSegment(p)).join("\n"), imgs.join("\n"), "")
+    else if imgs.length > 0 and openTask != "" and not pending(taskImageR)
+      send taskImageR = uploadTaskImages(openTask, imgs.map(p => lastSegment(p)).join("\n"), imgs.join("\n"))
+    if rest.length > 0 and not pending(notesImported)
+      send notesImported = importNotes(rest.join("\n"))
+  action afterImport
+    match notesImported
+      case some(r)
+        templateNotice = r.ok ? `Imported ${r.imported} note${r.imported == 1 ? "" : "s"}${r.skipped > 0 ? `, skipped ${r.skipped}` : ""}` : `Couldn’t import. (${r.error})`
+      case none
+        templateNotice = templateNotice
+  // Export: one note, one folder (with its subfolders) or the whole library, downloaded then handed to the save panel.
+  action exportNow(kind: string, id: string, folder: string, name: string)
+    if not pending(exportMade)
+      templateNotice = "Preparing the export…"
+      send exportMade = exportNotes(kind, id, folder, name)
+  action exportThisNote
+    if editorNoteId != ""
+      exportNow("note", editorNoteId, "", editorTitle.trim() == "" ? "Untitled" : editorTitle.trim())
+  action exportThisFolder
+    exportNow("folder", "", folderFilter, lastSegment(folderFilter))
+  action exportLibrary
+    exportNow("library", "", "", "Notient notes")
+  action afterExport
+    match exportMade
+      case some(r)
+        if r.ok
+          templateNotice = ""
+          saveFile("export-save", r.path, r.name)
+        else
+          templateNotice = `Couldn’t export. (${r.error})`
+      case none
+        templateNotice = templateNotice
+  action afterTemplateSaved
+    match templateSaved
+      case some(r)
+        if not r.ok
+          templateNotice = `Couldn’t save the template. (${r.error})`
+      case none
+        templateNotice = templateNotice
+  action newListFromTemplate(name: string, json: string)
+    if not pending(listMade)
+      send listMade = makeListFromTemplate(name, json)
+  action afterListMade
+    match listMade
+      case some(r)
+        if r.ok
+          nav = open(nav, path("taskList", r.id))
+        else
+          templateNotice = `Couldn’t start the list. (${r.error})`
+      case none
+        templateNotice = templateNotice
+  action askDeleteTemplate(id: string)
+    templateDelete = id
+    showModal("delete-template")
+  action deleteTemplateNow
+    send templateDeleted = deleteTemplate(templateDelete)
+    templateDelete = ""
   action openNewList
     iconQuery = ""
     if wide
@@ -1935,8 +2085,13 @@ component App
       nav = back(nav)
 
   view
-    main viewport-fit="cover" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
+    main viewport-fit="cover" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize dragenter=dropEntered dragleave=dropLeft drop=filesDropped testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
+      input id="export-save" display="none"
+      if dropOver and wide
+        column position="absolute" inset=12 z-index=60 align-items="center" justify-content="center" gap=6 border="3px dashed AccentColor" border-radius=18 background-color="light-dark(#ffffffd9, #000000d9)" pointer-events="none" testId="drop-overlay"
+          text "Drop to import" font="-exact-title2" font-weight=600
+          text "Images go into the open note or task. Markdown files and folders become notes." font="-exact-subheadline" color="-exact-secondary-label"
       if wide and session.signedIn
         // The title bar: our own row under the window controls (display_override window-controls-overlay, wide routes say navigationBar="none").
         row position="absolute" top=0 left=0 right=0 height=44 z-index=10 align-items="center" box-sizing="border-box" border-bottom="1px solid light-dark(#e5e5ea, #2c2c2e)" pointer-events="none" testId="titlebar"
@@ -1945,6 +2100,8 @@ component App
               LucideIcon(paths=["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M9 3v18"], color="-exact-secondary-label", size=18)
             text "Notient" font="-exact-headline"
           row flex=1 min-width=0 height=44 align-items="center" gap=6 box-sizing="border-box" padding-top=8 padding-left=12 padding-right=12 testId="crumbs-row"
+            if templateNotice != ""
+              text templateNotice color="-exact-system-green" font="-exact-subheadline" testId="template-notice" line-clamp=1
             if nav.tab == "tasks"
               button press=crumbHome appearance="none" pointer-events="auto" testId="crumb-section" padding="2px 8px" border-radius=6 background-color=(crumbOnList ? "transparent" : "light-dark(#e3ecfb, #2a3a55)")
                 text "Tasks" color="AccentColor" font="-exact-subheadline"
@@ -1979,9 +2136,12 @@ component App
                 else if wide
                   column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column" testId="notes-pane"
                     if sideNotes.length == 0
-                      EmptyState(symbol="symbol:document", title="Nothing written yet", message="Start with a note. It shows up in the sidebar as soon as it has a title or a line.")
-                        button press=openNewNote testId="pane-add-note"
-                          text "Write a Note"
+                      scroll flex=1 min-height=0
+                        column width="min(60rem, calc(100% - 3rem))" margin="0 auto" padding="32px 0px" gap=24 testId="notes-recent"
+                          EmptyState(symbol="symbol:document", title="Nothing written yet", message="Start with a note. It shows up in the sidebar as soon as it has a title or a line.")
+                            button press=openNewNote testId="pane-add-note"
+                              text "Write a Note"
+                          TemplateRow(label="Or start from a template", kind="note", items=templates.notes, use=openNoteFromTemplate, useList=newListFromTemplate, remove=askDeleteTemplate)
                     else
                       scroll flex=1 min-height=0
                         column width="min(60rem, calc(100% - 3rem))" margin="0 auto" padding="32px 0px" gap=16 testId="notes-recent"
@@ -1994,6 +2154,7 @@ component App
                               button press=openSideNote(n.id) appearance="none" testId=`pane-note-${n.id}` flex="1 1 17rem" max-width="28rem" box-sizing="border-box" padding=16 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)" text-align="start" display="flex" flex-direction="column" gap=6 contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                                 text (n.title.trim() == "" ? "Untitled" : n.title) font="-exact-headline" line-clamp=1
                                 text (isVault(n.tags) ? "Vault note" : previewOf(n.body) == "" ? "No text yet." : previewOf(n.body)) font="-exact-subheadline" color="-exact-secondary-label" line-clamp=3
+                          TemplateRow(label="Start from a template", kind="note", items=templates.notes, use=openNoteFromTemplate, useList=newListFromTemplate, remove=askDeleteTemplate)
                 else
                   column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column" contextPopover="empty-notes-menu"
@@ -2005,6 +2166,8 @@ component App
                           NotifBell(count=unreadCount)
                       if not wide
                         text "Notes" role="heading" aria-level=1 flex=1 min-width=0
+                      button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-notes"
+                        image "symbol:document"
                       button press=openNewNote aria-label="New Note" testId="add-note"
                         image "symbol:compose"
                       button press=openTrash aria-label="Trash" testId="open-trash"
@@ -2026,6 +2189,8 @@ component App
                           image "symbol:sort"
                         if folderFilter != ""
                           text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
+                          button press=exportThisFolder aria-label="Export this folder" testId="export-folder" disabled=pending(exportMade)
+                            image "symbol:share"
                         if tagFilter != ""
                           text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
                     if not sameOwner
@@ -2079,7 +2244,7 @@ component App
               if e.name == "note"
                 if sameOwner
                   for n in lib.notes.filter(x => x.id == e.params.id) key=`${n.id}-${n.version}`
-                    NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved)), error=saveError, imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=false)
+                    NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved)), error=saveError, imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, saveTpl=saveNoteAsTemplate, exportIt=exportThisNote, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=false)
                 else if pending(lib)
                   column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column"
                     column flex=1 justify-content="center" align-items="center"
@@ -2221,7 +2386,7 @@ component App
                   else
                     EmptyState(symbol="symbol:link", title="No Note Here", message="This link is gone, expired or the note was deleted.")
               if e.name == "newNote"
-                NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved) or pending(noteStarted)), error=(addError != "" ? addError : saveError), imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=true)
+                NoteEditor(wide=wide, route=e.id, noteId=editorNoteId, title=editorTitle, body=editorBody, folder=editorFolder, tagsText=editorTagsText, pinned=editorPinned, mode=editorMode, metaLine=editorMetaLine, folderPool=recentFolders, tagPool=popularTags, saving=(pending(noteSaved) or pending(noteStarted)), error=(addError != "" ? addError : saveError), imageError=(pending(noteImage) ? "" : imageError), editTitle=editEditorTitle, editBody=editEditorBody, editFolder=editEditorFolder, editTags=editEditorTags, togglePin=toggleEditorPin, toggleLine=toggleTaskLine, startEdit=startEdit, saveAndClose=saveAndClose, trash=askTrash, share=openShare, saveTpl=saveNoteAsTemplate, exportIt=exportThisNote, pickImageDone=imageChosen, chromeHidden=noteChromeHidden, onScroll=noteScrolled, onCaret=caretMoved, onImage=imageOp, imageSelected=caretOnImage, imageHref=caretImageHref, copy=copyBlock, copiedKey=codeCopied, hl=codeHl.blocks, zoom=openLightbox, vault=editorVault, toggleVault=toggleVault, eyePaths=eyePaths, eyeOffPaths=eyeOffPaths, fresh=true)
               if e.name == "tasks"
                 if not session.signedIn
                   column navigationKey=`${e.id}` navigationBar="none" position="absolute" inset=0 display="flex" flex-direction="column"
@@ -2229,9 +2394,12 @@ component App
                 else if wide
                   column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) position="absolute" inset=0 display="flex" flex-direction="column" testId="tasks-pane"
                     if not listsSame or lists.lists.length == 0
-                      EmptyState(symbol="symbol:list", title="No lists yet", message="A list for the weekly shop is a good first one.")
-                        button press=openNewList testId="pane-new-list"
-                          text "New List"
+                      scroll flex=1 min-height=0
+                        column width="min(60rem, calc(100% - 3rem))" margin="0 auto" padding="32px 0px" gap=24 testId="tasks-recent"
+                          EmptyState(symbol="symbol:list", title="No lists yet", message="A list for the weekly shop is a good first one.")
+                            button press=openNewList testId="pane-new-list"
+                              text "New List"
+                          TemplateRow(label="Or start from a template", kind="list", items=templates.lists, use=openNoteFromTemplate, useList=newListFromTemplate, remove=askDeleteTemplate)
                     else
                       scroll flex=1 min-height=0
                         column width="min(60rem, calc(100% - 3rem))" margin="0 auto" padding="32px 0px" gap=16 testId="tasks-recent"
@@ -2252,6 +2420,7 @@ component App
                                   text t.title font="-exact-subheadline" color="-exact-secondary-label" line-clamp=1
                                 if recentTaskRows.filter(x => x.listId == l.id).length == 0
                                   text "Nothing open." font="-exact-subheadline" color="-exact-secondary-label"
+                          TemplateRow(label="Start from a template", kind="list", items=templates.lists, use=openNoteFromTemplate, useList=newListFromTemplate, remove=askDeleteTemplate)
                 else
                   column navigationKey=`${e.id}` navigationBar=(wide ? "none" : "auto") box-sizing="border-box" padding-top=(wide ? 44 : 0) navigationScroll=`content-${e.id}` position="absolute" inset=0
                     display="flex" flex-direction="column" contextPopover="empty-tasks-menu"
@@ -2263,6 +2432,8 @@ component App
                           NotifBell(count=unreadCount)
                       if not wide
                         text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
+                      button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-tasks"
+                        image "symbol:document"
                       button press=openNewList aria-label="New list" testId="new-list-button"
                         image "symbol:list"
                       button popovertarget="new-folder-pop" aria-label="New folder" testId="new-folder-button"
@@ -2344,6 +2515,8 @@ component App
                       if sectionsSame and sections.sections.length > 1
                         button press=openSectionOrder testId="menu-reorder-sections"
                           text "Reorder sections"
+                      button press=saveListAsTemplate popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-save-template"
+                        text "Save as template"
                       button press=openShareList(e.params.id) popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-share"
                         text "Share"
                       button press=openEditList(e.params.id) popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-edit"
@@ -2853,6 +3026,20 @@ component App
             text (listView == "board" ? (folded(shutCols, ctxSection) ? "Expand" : "Collapse") : (folded(foldedCols, ctxSection) ? "Expand" : "Collapse"))
         button press=ctxSectionAdd popovertarget="section-menu" popovertargetaction="hide" testId="ctx-section-add"
           text "Add Task"
+      column id="tpl-menu" popover="auto" role="menu" aria-label="Templates" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-width="20rem" max-height="24rem" overflow-y="auto" testId="tpl-menu"
+        if tplAll.length > 6
+          input type="search" value=tplQuery input=setTplQuery placeholder="Search templates" appearance="none" aria-label="Search templates" testId="tpl-search" padding=8
+        for t in tplShown key=t.id
+          if nav.tab == "tasks"
+            button role="menuitem" press=newListFromTemplate(t.name, t.json) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
+              text t.name font="-exact-headline" line-clamp=1
+              text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+          else
+            button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
+              text t.name font="-exact-headline" line-clamp=1
+              text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+        if tplShown.length == 0
+          text "No templates match" color="-exact-secondary-label" padding=8
       column id="empty-notes-menu" popover="auto" role="menu" aria-label="Notes" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="empty-notes-menu"
         button press=openNewNote popovertarget="empty-notes-menu" popovertargetaction="hide" testId="ctx-empty-newnote"
           text "New Note"
@@ -2897,6 +3084,8 @@ component App
             ServerLine(host=serverCheck.host, state=serverCheck.state)
         button role="menuitem" press=openSettings popovertarget="persona-menu" popovertargetaction="hide" testId="menu-settings"
           text "Settings"
+        button role="menuitem" press=exportLibrary popovertarget="persona-menu" popovertargetaction="hide" testId="menu-export-library"
+          text "Export all notes"
         button role="menuitem" press=doSignOut popovertarget="persona-menu" popovertargetaction="hide" testId="sign-out"
           text "Sign Out"
       column id="notif-pop" popover="auto" role="menu" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-height="26rem" overflow-y="auto" testId="notif-pop"
@@ -2924,20 +3113,22 @@ component App
           text "Delete"
         button commandfor="delete-forever" command="close" testId="forever-cancel"
           text "Cancel"
-      dialog id="lightbox" closedby="any" aria-label="Image" background-color="#000000eb" width="100%" height="100%" padding=0 testId="lightbox"
-        image lightboxUrl width="100%" height="100%" object-fit="contain" aria-label="Image" testId="lightbox-image"
-        button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
-          image "symbol:close"
+      dialog id="lightbox" closedby="any" aria-label="Image" background-color="#000000eb" width="100%" height="100%" padding=0 display="flex" flex-direction="column" testId="lightbox"
+        view position="relative" flex=1 min-height=0 width="100%"
+          image lightboxUrl width="100%" height="100%" object-fit="contain" aria-label="Image" testId="lightbox-image"
+          if lightboxList.length > 1
+            button press=lightboxStep(-1) aria-label="Previous image" testId="lightbox-prev" position="absolute" left=16 top="50%" margin-top=-22 width=44 height=44 border-radius=22 background-color="#00000080" display="flex" align-items="center" justify-content="center"
+              LucideIcon(paths=["m15 18-6-6 6-6"], color="#ffffff", size=28)
+            button press=lightboxStep(1) aria-label="Next image" testId="lightbox-next" position="absolute" right=16 top="50%" margin-top=-22 width=44 height=44 border-radius=22 background-color="#00000080" display="flex" align-items="center" justify-content="center"
+              LucideIcon(paths=["m9 18 6-6-6-6"], color="#ffffff", size=28)
         if lightboxList.length > 1
-          button press=lightboxStep(-1) aria-label="Previous image" testId="lightbox-prev" position="absolute" left=16 top="50%" margin-top=-22 width=44 height=44 border-radius=22 background-color="#00000080" display="flex" align-items="center" justify-content="center"
-            LucideIcon(paths=["m15 18-6-6 6-6"], color="#ffffff", size=28)
-          button press=lightboxStep(1) aria-label="Next image" testId="lightbox-next" position="absolute" right=16 top="50%" margin-top=-22 width=44 height=44 border-radius=22 background-color="#00000080" display="flex" align-items="center" justify-content="center"
-            LucideIcon(paths=["m9 18 6-6-6-6"], color="#ffffff", size=28)
-          scroll overflow-x="auto" overflow-y="hidden" position="absolute" left=0 right=0 bottom=0 padding="10px 16px calc(env(safe-area-inset-bottom) + 10px)" background-color="#00000080" testId="lightbox-strip"
+          scroll overflow-x="auto" overflow-y="hidden" flex-shrink=0 width="100%" box-sizing="border-box" padding="10px 16px calc(env(safe-area-inset-bottom) + 10px)" background-color="#000000" testId="lightbox-strip"
             row gap=8 align-items="center" justify-content="center" min-width="100%" width="max-content"
               for u in lightboxList key=u
                 button appearance="none" press=lightboxGo(u) aria-label="Show this image" testId="lightbox-thumb" padding=0 flex-shrink=0 opacity=(u == lightboxUrl ? 1 : 0.5) border=(u == lightboxUrl ? "2px solid #ffffff" : "2px solid transparent") border-radius=6
                   image u width=64 height=48 object-fit="cover" border-radius=4
+        button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
+          image "symbol:close"
       dialog id="delete-task" role="alertdialog" aria-label="Delete Task?"
         text "The task and its subtasks move away. This can’t be undone."
         button press=removeTaskNow destructive=true commandfor="delete-task" command="close" testId="delete-task-confirm"
@@ -2949,6 +3140,12 @@ component App
         button press=ctxDeleteNow destructive=true commandfor="delete-task-ctx" command="close" testId="ctx-delete-confirm"
           text "Delete"
         button commandfor="delete-task-ctx" command="close" testId="ctx-delete-cancel"
+          text "Cancel"
+      dialog id="delete-template" role="alertdialog" aria-label="Delete Template?"
+        text "The template is removed. Notes and lists made from it stay."
+        button press=deleteTemplateNow destructive=true commandfor="delete-template" command="close" testId="delete-template-confirm"
+          text "Delete"
+        button commandfor="delete-template" command="close" testId="delete-template-cancel"
           text "Cancel"
       dialog id="delete-subtask" role="alertdialog" aria-label="Delete Subtask?"
         text "The subtask is removed. This can’t be undone."
@@ -3321,6 +3518,33 @@ component Assignee
     view width=size height=size border-radius="50%" flex-shrink=0 display="flex" align-items="center" justify-content="center" background-color=(color == "" ? "AccentColor" : color) aria-label=`Assigned to ${name}` testId="assignee-mark"
       text (name.trim() == "" ? "?" : name.trim().slice(0, 1).toUpperCase()) color=(color == "" ? "AccentColorText" : "#ffffff") font-size=size * 0.6 font-weight=600
 
+// A row of templates (the built-ins, then the person's own, which have a delete): a card starts a new note or list from one.
+component TemplateRow
+  props
+    label: string
+    kind: string
+    items: TemplateItem[]
+    use: action
+    useList: action
+    remove: action
+  view
+    column gap=10 testId=`templates-${kind}`
+      text label font="-exact-headline" role="heading" aria-level=2
+      row flex-wrap="wrap" gap=12
+        for t in items key=t.id
+          row gap=4 align-items="flex-start" flex="1 1 13rem" max-width="20rem" min-width=0 box-sizing="border-box" padding-right=(t.builtin ? 0 : 6) border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)"
+            if kind == "note"
+              button press=use(t.title, t.body) appearance="none" aria-label=`New note from ${t.name}` testId=`template-${t.id}` flex=1 min-width=0 box-sizing="border-box" padding=14 display="flex" flex-direction="column" gap=4 text-align="start"
+                text t.name font="-exact-headline" line-clamp=1
+                text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=2
+            else
+              button press=useList(t.name, t.json) appearance="none" aria-label=`New list from ${t.name}` testId=`template-${t.id}` flex=1 min-width=0 box-sizing="border-box" padding=14 display="flex" flex-direction="column" gap=4 text-align="start"
+                text t.name font="-exact-headline" line-clamp=1
+                text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=2
+            if not t.builtin
+              button press=remove(t.id) appearance="none" aria-label=`Delete template ${t.name}` testId=`template-delete-${t.id}` margin-top=8 width=24 height=24 flex-shrink=0 display="flex" align-items="center" justify-content="center"
+                image "symbol:close" width=12 height=12
+
 component TaskLabel
   props
     tk: Task
@@ -3338,8 +3562,10 @@ component TaskLabel
           text bangs(tk.priority) color="-exact-system-orange" font="-exact-headline" flex-shrink=0
         if tk.flagged
           text "⚑" color="-exact-system-orange" flex-shrink=0
-      if tk.notes != ""
-        text firstLine(tk.notes) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1
+      if tk.latestBody != ""
+        row gap=4 align-items="center" testId=`task-latest-${tk.id}`
+          Avatar(size=16, name=memberOf(members, tk.latestBy).name, icon="", color=memberOf(members, tk.latestBy).color, photoUrl=memberOf(members, tk.latestBy).photo, fetched=[], testId=`task-latest-avatar-${tk.id}`, show=true)
+          text firstLine(tk.latestBody) color="-exact-secondary-label" font="-exact-footnote" line-clamp=1 flex=1 min-width=0
       if tk.dueAt != 0 or tk.recurrence != "none" or tk.subtaskCount > 0 or tk.tags.length > 0
         row gap=6 align-items="center" flex-wrap="wrap"
           if tk.dueAt != 0
@@ -3916,20 +4142,20 @@ component NoteBlocks
           column width="100%" padding="4px 16px" box-sizing="border-box" testId=`view-image-${b.index}`
             if imgHref(b.text) != ""
               link href=imgHref(b.text) aria-label=`Open ${imgHref(b.text)}` testId=`view-image-link-${b.index}`
-                image imgSrc(b.text) width="100%" max-height="15rem" object-fit="contain" aria-label=imgAlt(b.text)
+                image imgSrc(b.text) width="100%" max-width="15rem" max-height="15rem" object-fit="contain" aria-label=imgAlt(b.text)
             else
               button appearance="none" press=zoom(imgSrc(b.text), allImages) aria-label="View image full size" testId=`view-image-zoom-${b.index}` padding=0 width="100%"
-                image imgSrc(b.text) width="100%" max-height="15rem" object-fit="contain" aria-label=imgAlt(b.text)
+                image imgSrc(b.text) width="100%" max-width="15rem" max-height="15rem" object-fit="contain" aria-label=imgAlt(b.text)
         else if b.kind == "gallery"
-          scroll overflow-x="auto" overflow-y="hidden" width="100%" box-sizing="border-box" padding="4px 16px" testId=`view-gallery-${b.index}`
-            row gap=8 height=200 align-items="center"
+          column width="100%" box-sizing="border-box" padding="4px 16px" testId=`view-gallery-${b.index}`
+            row gap=8 flex-wrap="wrap" align-items="flex-start"
               for g in b.text.split("\n") key=g
                 if imgHref(g) != ""
                   link href=imgHref(g) aria-label=`Open ${imgHref(g)}` flex-shrink=0
-                    image imgSrc(g) height=200 border-radius=8 object-fit="cover" aria-label=imgAlt(g)
+                    image imgSrc(g) width="15rem" max-width="100%" height=160 border-radius=8 object-fit="cover" aria-label=imgAlt(g)
                 else
                   button appearance="none" press=zoom(imgSrc(g), allImages) aria-label="View image full size" padding=0 flex-shrink=0 testId=`view-gallery-zoom-${b.index}`
-                    image imgSrc(g) height=200 border-radius=8 object-fit="cover" aria-label=imgAlt(g)
+                    image imgSrc(g) width="15rem" max-width="100%" height=160 border-radius=8 object-fit="cover" aria-label=imgAlt(g)
         else if b.kind == "link"
           text user-select="text" overflow-wrap="anywhere" width="100%" max-width="100%" box-sizing="border-box" font-size=linkSize(b.text) font-weight=(headLevel(b.text) > 0 ? 700 : 400) line-height=(headLevel(b.text) > 0 ? "34px" : "26px") padding=`0px 16px 0px ${16 + (quoteLine(b.text) ? 12 : 0) + b.text.indexOf(b.text.trim().slice(0, 1)) * 5}px`
             for sp in spansOf(lineBody(b.text)) key=sp.k
@@ -4001,6 +4227,8 @@ component NoteEditor
     saveAndClose: action
     trash: action
     share: action
+    saveTpl: action
+    exportIt: action
     pickImageDone: action
     chromeHidden: bool
     onScroll: action
@@ -4108,6 +4336,10 @@ component NoteEditor
           image "symbol:lock"
         button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin"
           image "symbol:pin"
+        button press=exportIt aria-label="Export note" testId="note-export" disabled=(noteId == "")
+          image "symbol:share"
+        button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
+          LucideIcon(paths=["M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4 14h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M17 14h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"], color="-exact-label", size=18)
         button press=share(noteId) aria-label="Share" testId="note-share"
           image "symbol:share"
         button press=trash aria-label="Move to Trash" testId="note-trash"
@@ -4384,12 +4616,13 @@ component NotifBell
   props
     count: number
   view
-    view position="relative" display="flex" flex-shrink=0
+    if count > 0
+      button popovertarget="notif-pop" aria-label=`Notifications, ${count} unread` testId="bell"
+        view min-width=18 height=18 border-radius=9 background-color="-exact-system-red" display="flex" align-items="center" justify-content="center"
+          text `${count}` color="#ffffff" font-size=11 font-weight=600
+    else
       button popovertarget="notif-pop" aria-label="Notifications" testId="bell"
-        image (count > 0 ? "symbol:notifications-fill" : "symbol:notifications")
-      if count > 0
-        view position="absolute" top=0 right=0 min-width=14 height=14 border-radius=7 box-sizing="border-box" padding="0 3px" background-color="-exact-system-red" display="flex" align-items="center" justify-content="center" pointer-events="none" testId="bell-count"
-          text `${count}` color="#ffffff" font="-exact-caption2"
+        image "symbol:notifications"
 
 component ColorSwatches
   props

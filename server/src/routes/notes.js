@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { nanoid } from "nanoid";
+import { ZipArchive } from "archiver";
 import { HttpError } from "../errors.js";
 
 const querySchema = z.object({
@@ -58,6 +59,26 @@ const updateSchema = z
     },
   );
 
+// Export: a note as "# Title" plus its body, so the title survives a round trip through import.
+const safeName = (value, fallback) => {
+  const n = String(value ?? "")
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/, "")
+    .slice(0, 100);
+  return n === "" || n === "." || n === ".." ? fallback : n;
+};
+const exportText = (note) => {
+  const title = String(note.title ?? "").trim();
+  const body = String(note.bodyMarkdown ?? "");
+  return title === "" ? body : `# ${title}\n\n${body.replace(/^\n+/, "")}`;
+};
+const inFolder = (folder, root) => {
+  const f = String(folder ?? "");
+  return f === root || f.startsWith(`${root}/`);
+};
+
 export function createNotesRouter({ repos, requireAuth }) {
   const router = Router();
 
@@ -87,6 +108,54 @@ export function createNotesRouter({ repos, requireAuth }) {
         next(new HttpError(400, "Invalid query parameters", "invalid_query"));
         return;
       }
+      next(error);
+    }
+  });
+
+  // Export: the library or one folder (with its subfolders) as a zip laid out like the folders, or one note as a file.
+  router.get("/export", (req, res, next) => {
+    try {
+      const { userId } = req.auth;
+      const folder = typeof req.query.folder === "string" ? req.query.folder.trim() : "";
+      const mine = repos.notes.list({ userId, includeDeleted: false }).filter((n) => n.userId === userId);
+      const picked = folder === "" ? mine : mine.filter((n) => inFolder(n.folder, folder));
+      const label = safeName(folder === "" ? "Notient notes" : folder.split("/").at(-1), "Notient notes");
+      res.setHeader("content-type", "application/zip");
+      res.setHeader("content-disposition", `attachment; filename="${label}.zip"`);
+      const zip = new ZipArchive({ zlib: { level: 6 } });
+      zip.on("error", next);
+      zip.pipe(res);
+      const used = new Set();
+      for (const n of picked) {
+        const dir = String(n.folder ?? "")
+          .split("/")
+          .map((p) => safeName(p, ""))
+          .filter((p) => p !== "")
+          .join("/");
+        const base = safeName(n.title, "Untitled");
+        let name = `${dir === "" ? "" : `${dir}/`}${base}`;
+        for (let k = 2; used.has(name.toLowerCase()); k++) name = `${dir === "" ? "" : `${dir}/`}${base} (${k})`;
+        used.add(name.toLowerCase());
+        zip.append(exportText(n), { name: `${name}.md`, date: new Date(n.updatedAt || Date.now()) });
+      }
+      zip.finalize();
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/:id/export", (req, res, next) => {
+    try {
+      const { userId } = req.auth;
+      const note = repos.notes.findById({ userId, id: req.params.id });
+      if (!note) {
+        next(new HttpError(404, "Note not found", "note_not_found"));
+        return;
+      }
+      res.setHeader("content-type", "text/markdown; charset=utf-8");
+      res.setHeader("content-disposition", `attachment; filename="${safeName(note.title, "Untitled")}.md"`);
+      res.send(exportText(note));
+    } catch (error) {
       next(error);
     }
   });

@@ -6,6 +6,7 @@ import { createTaskNotificationsRepository } from "./taskNotifications.js";
 import { createTaskSharesRepository } from "./taskShares.js";
 import { createTaskAttachmentsRepository } from "./taskAttachments.js";
 import { createTaskNotesRepository } from "./taskNotes.js";
+import { createTemplatesRepository } from "./templates.js";
 import { createTaskListSharesRepository } from "./taskListShares.js";
 import { createNoteSharesRepository } from "./noteShares.js";
 import { createShareableLinksRepository } from "./shareableLinks.js";
@@ -159,6 +160,7 @@ export function createRepositories(db, config) {
     taskShares: createTaskSharesRepository(db),
     taskAttachments: createTaskAttachmentsRepository(db),
     taskNotes: createTaskNotesRepository(db),
+    templates: createTemplatesRepository(db),
     taskListShares: createTaskListSharesRepository(db),
     noteShares: createNoteSharesRepository(db),
     shareableLinks: createShareableLinksRepository(db),

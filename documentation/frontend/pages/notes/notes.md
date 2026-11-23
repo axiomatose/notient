@@ -101,20 +101,25 @@ Response: { link, slug }
 
 ### Import/Export
 
-**Export Notes**
+**Export Notes** (all need auth; own notes only, trashed excluded)
 
 ```
-GET /api/notes/export
-Response: JSON file with all notes
+GET /notes/:id/export           → one .md ("# Title" + body)
+GET /notes/export?folder=A/B    → zip of that folder and its subfolders, laid out as folders
+GET /notes/export               → zip of the whole library
 ```
+Entry names are the note titles (`Title (2).md` on repeats). App: `exportNotes` source downloads to `app:/tmp/export/` (`exactBodyTo`) then `saveFile`; UI: `note-export` (editor), `export-folder` (toolbar, with a folder filter), persona menu "Export all notes".
 
 **Import Notes**
 
 ```
-POST /api/notes/import
+POST /notes/import
 Body: FormData with .zip or .md file
 Response: { success: boolean, count: number }
 ```
+A zip keeps its directories as note folders; a single `.md` is folderless. First `# Heading` becomes the title; text is stored as written.
+
+**On disk:** `notes/<userId>/<folder>/<subfolder>/<noteId>.md`, one whole Markdown file per note (file name stays the note id; folder names sanitised, `..` dropped). Folder changes move the file; startup runs `notes.migrateLayout()` for the old flat layout (`notes/<userId>/<noteId>.md`), reads fall back to it.
 
 ### Client Storage
 

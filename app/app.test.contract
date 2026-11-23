@@ -324,6 +324,9 @@ test "a task carries notes, a due date, priority, tags and subtasks"
   clock data
   clock settle
   expect state taskNotes.notes.0 .body == "# Steps"
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .latestBody == "# Steps"
   tap "task-date-toggle"
   clock settle
   type "task-due" "2026-11-20"
@@ -1587,7 +1590,7 @@ test "a repeating task advances its due date when checked off"
   clock settle
   tap "task-date-toggle"
   clock settle
-  type "task-due" "2026-11-20"
+  type "task-due" "2030-01-10"
   type "task-repeat" "daily"
   tap "task-done"
   clock data
@@ -1597,7 +1600,7 @@ test "a repeating task advances its due date when checked off"
   clock data
   clock settle
   expect state tasks.tasks.0 .isDone == false
-  expect state tasks.tasks.0 .dueDay == "2026-11-21"
+  expect state tasks.tasks.0 .dueDay == "2030-01-11"
 
 test "a list gets an icon and color"
   type "email" "icon1@example.com"
@@ -1835,6 +1838,21 @@ test "the phone layout keeps the tab bar"
   expect tree has "tabs"
   expect tree has "persona"
   expect tree missing "sidebar"
+
+test "the phone templates dropdown starts a note and a list"
+  size 390x844
+  type "email" "sb3@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Sb"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "templates-button-notes"
+  tap "tpl-builtin-meeting"
+  clock settle
+  expect state editorTitle == "Meeting notes"
 
 test "settings: display name and appearance are saved"
   type "email" "pat@example.com"
@@ -2872,3 +2890,55 @@ test "a note's right-click menu pins it"
   clock data
   clock settle
   expect state lib.notes.0 .isPinned == true
+
+test "a new note can start from a template"
+  size 1280x800
+  type "email" "tpl1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Tpl"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-new-note"
+  clock settle
+  type "note-title" "First"
+  type "note-body" "Something"
+  tap "note-save"
+  clock data
+  clock settle
+  tap "crumb-section"
+  clock settle
+  expect state templates.notes.length == 4
+  tap "New note from Meeting notes"
+  clock settle
+  expect state editorTitle == "Meeting notes"
+  expect state editorMode == "edit"
+
+test "a list starts from a template, and a list can be saved as one"
+  size 1280x800
+  type "email" "tpl2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Tpl"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock data
+  clock settle
+  tap "New list from Packing list"
+  clock data
+  clock data
+  clock settle
+  expect state tasks.tasks.length == 11
+  expect state crumbLeaf == "Packing list"
+  tap "list-menu"
+  clock settle
+  tap "list-save-template"
+  clock data
+  clock settle
+  expect state templates.lists.length == 4
+  expect state templates.lists.3 .name == "Packing list"

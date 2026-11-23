@@ -257,6 +257,19 @@ FK: task_id → tasks(id) CASCADE
 ```
 Migration 36 turns each task's old `tasks.notes` into its first note (`legacy-<taskId>`, by the task's owner). `POST /tasks` with `notes` creates the first note; `PATCH /tasks/:id` `notes` is no longer used by the app.
 
+List rows (`tasksRepo.list`, so `GET /tasks`, `/tasks/board`) carry `latestNote {body, userId, createdAt}` (newest thread note, omitted when none): the board/list card subtext. List members (`createListAccess.members`) carry `avatarUrl`/`avatarUpdatedAt` for the card's avatar.
+
+**templates** (migration 37; a person's saved note and list templates)
+```sql
+id TEXT PRIMARY KEY
+user_id TEXT (owner, CASCADE)
+kind TEXT ('note' | 'list')
+name TEXT
+payload TEXT (JSON: note {title, body}; list {icon, color, sections[{name,icon,color}], tasks[{title, section (index, -1 none), priority, flagged, tags, subtasks[]}]})
+created_at INTEGER
+```
+Routes (`routes/templates.js`, owner only): `GET /templates` → `{templates}`, `POST /templates {kind,name,payload}` → 201, `DELETE /templates/:id`. Built-ins live in the app (`BUILTIN_NOTES`, `BUILTIN_LISTS` in `app/app.ts`).
+
 **push_subscriptions**
 ```sql
 id TEXT PRIMARY KEY

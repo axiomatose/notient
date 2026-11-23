@@ -48,6 +48,9 @@ export const grants = {
     'fs.read app:/data/notes-cache.json',
     'fs.write app:/data/notes-cache.json',
     'fs.read app:/tmp/picked',
+    'fs.read doc:/',
+    'fs.write app:/tmp/export',
+    'fs.read app:/tmp/export',
   ],
   'https://notient-placeholder.invalid': [
     'net.fetch https:',
@@ -67,6 +70,9 @@ export const grants = {
     'fs.read app:/data/notes-cache.json',
     'fs.write app:/data/notes-cache.json',
     'fs.read app:/tmp/picked',
+    'fs.read doc:/',
+    'fs.write app:/tmp/export',
+    'fs.read app:/tmp/export',
   ],
   'https://notes.vanceprop.com': [
     'net.fetch https:',
@@ -86,6 +92,9 @@ export const grants = {
     'fs.read app:/data/notes-cache.json',
     'fs.write app:/data/notes-cache.json',
     'fs.read app:/tmp/picked',
+    'fs.read doc:/',
+    'fs.write app:/tmp/export',
+    'fs.read app:/tmp/export',
   ],
 };
 
@@ -203,6 +212,45 @@ async function requestOnce(store: unknown, path: string, init: RequestInit = {})
 
 // One request answers a board: its sections, tasks, every task's subtasks and the people on the list.
 // loadTasks, loadBoardSubtasks, loadSections and loadMembers each read it; `call` makes them share one fetch.
+// Built-in templates: a note is a title and body; a list is sections and tasks (task.section indexes sections, -1 none).
+type ListTpl = { icon?: string; color?: string; viewMode?: 'list' | 'board'; sections: { name: string; icon?: string; color?: string }[]; tasks: { title: string; section: number; priority?: number; flagged?: boolean; tags?: string[]; subtasks?: string[] }[] };
+const BUILTIN_NOTES: { id: string; name: string; blurb: string; title: string; body: string }[] = [
+  { id: 'builtin-meeting', name: 'Meeting notes', blurb: 'Agenda, decisions, action items', title: 'Meeting notes', body: '## Agenda\n\n- \n\n## Notes\n\n\n## Decisions\n\n\n## Action items\n\n- [ ] \n' },
+  { id: 'builtin-weekly', name: 'Weekly review', blurb: 'Wins, lessons, next week', title: 'Weekly review', body: '## Wins\n\n- \n\n## What I learned\n\n- \n\n## What got in the way\n\n- \n\n## Next week\n\n- [ ] \n- [ ] \n- [ ] \n' },
+  { id: 'builtin-project', name: 'Project brief', blurb: 'Goal, scope, milestones, risks', title: 'Project brief', body: '## Goal\n\n\n## Scope\n\n- In: \n- Out: \n\n## Milestones\n\n- [ ] \n\n## Risks\n\n- \n' },
+  { id: 'builtin-journal', name: 'Daily journal', blurb: 'Gratitude, highlights, tomorrow', title: 'Journal', body: '## Grateful for\n\n- \n\n## Highlights\n\n- \n\n## Tomorrow\n\n- [ ] \n' },
+];
+const BUILTIN_LISTS: { id: string; name: string; blurb: string; tpl: ListTpl }[] = [
+  { id: 'builtin-packing', name: 'Packing list', blurb: 'Clothes, toiletries, documents, tech', tpl: { icon: 'luggage', color: '#007AFF', sections: [{ name: 'Clothes' }, { name: 'Toiletries' }, { name: 'Documents' }, { name: 'Tech' }], tasks: [
+    { title: 'Tops', section: 0 }, { title: 'Bottoms', section: 0 }, { title: 'Underwear and socks', section: 0 }, { title: 'Pajamas', section: 0 }, { title: 'Toothbrush and toothpaste', section: 1 }, { title: 'Deodorant', section: 1 }, { title: 'Medications', section: 1 },
+    { title: 'Passport or ID', section: 2, priority: 3 }, { title: 'Tickets and reservations', section: 2 }, { title: 'Phone charger', section: 3 }, { title: 'Headphones', section: 3 }] } },
+  { id: 'builtin-project-plan', name: 'Project plan', blurb: 'To do, in progress, done. Kanban style.', tpl: { icon: 'kanban', color: '#AF52DE', viewMode: 'board', sections: [{ name: 'To Do', color: '#FF9500' }, { name: 'In Progress', color: '#007AFF' }, { name: 'Done', color: '#34C759' }], tasks: [
+    { title: 'Define the goal', section: 0, priority: 3 }, { title: 'List the milestones', section: 0, subtasks: ['First draft', 'Review'] }, { title: 'Assign owners', section: 0 }, { title: 'Set a check-in date', section: 0 }] } },
+  { id: 'builtin-moving', name: 'Moving checklist', blurb: 'Before, moving day, after', tpl: { icon: 'truck', color: '#FF9500', sections: [{ name: 'Before' }, { name: 'Moving day' }, { name: 'After' }], tasks: [
+    { title: 'Book movers or a truck', section: 0, priority: 3 }, { title: 'Pack room by room', section: 0 }, { title: 'Change your address', section: 0, subtasks: ['Post office', 'Bank', 'Insurance'] }, { title: 'Set up utilities', section: 0 },
+    { title: 'Walk through the old place', section: 1 }, { title: 'Hand over the keys', section: 1 }, { title: 'Unpack essentials first', section: 2 }, { title: 'Meet the neighbours', section: 2 }] } },
+];
+const listSummary = (t: ListTpl): string => `${t.sections.length} section${t.sections.length === 1 ? '' : 's'} · ${t.tasks.length} task${t.tasks.length === 1 ? '' : 's'}`;
+
+
+// Import: Markdown and text files dropped on the app (or whole folders of them) become notes. A file dropped on its
+// own is folderless; inside a dropped folder the path below it names the note's folder ("Notes/Work/2024").
+const NOTE_EXT = /\.(md|markdown|mdown|txt)$/i;
+const IMPORT_MAX_FILES = 3000;
+const IMPORT_MAX_BYTES = 2 * 1024 * 1024;
+const leaf = (path: string): string => path.split('/').filter((p) => p !== '').at(-1) ?? path;
+const noteFromText = (file: string, text: string): { title: string; body: string } => {
+  const base = file.replace(NOTE_EXT, '').trim();
+  const clean = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const m = /^(?:\s*\n)*#[ \t]+(.+?)[ \t#]*\n?/.exec(clean);
+  if (m && m[1].trim() !== '') return { title: m[1].trim().slice(0, 200), body: clean.slice(m[0].length).replace(/^\n+/, '') };
+  return { title: (base === '' ? 'Untitled' : base).slice(0, 200), body: clean };
+};
+const folderOf = (parts: string[]): string => {
+  const joined = parts.join('/');
+  return joined.length > 120 ? joined.slice(joined.length - 120).replace(/^[^/]*\//, '') : joined;
+};
+
 const boardOf = (store: unknown, listId: string): Promise<Answered> => callWith(store, `/tasks/board?listId=${encodeURIComponent(listId)}`);
 
 const uploadNoteImageOne = async (noteId: string, name: string, path: string, mime: string, store: unknown, storage: Storage): Promise<{ ok: boolean; url: string; error: string }> => {
@@ -302,7 +350,7 @@ type ListBody = { id: string; name: string; icon?: string | null; color?: string
 const isListBody = (v: unknown): v is ListBody =>
   typeof v === 'object' && v !== null && typeof (v as ListBody).id === 'string' && typeof (v as ListBody).name === 'string';
 
-type TaskBody = { id: string; title: string; isDone: boolean; notes?: string | null; dueAt?: number | null; dueHasTime?: boolean; remindAt?: number | null; flagged?: boolean; recurrence?: string | null; url?: string | null; priority?: number | null; sectionId?: string | null; tags?: unknown; version?: number; sortOrder?: number | null; subtaskCount?: number; parentId?: string | null; assigneeId?: string | null; completedAt?: number | null };
+type TaskBody = { id: string; title: string; isDone: boolean; notes?: string | null; dueAt?: number | null; dueHasTime?: boolean; remindAt?: number | null; flagged?: boolean; recurrence?: string | null; url?: string | null; priority?: number | null; sectionId?: string | null; tags?: unknown; version?: number; sortOrder?: number | null; subtaskCount?: number; latestNote?: { body: string; userId: string | null; createdAt: number } | null; parentId?: string | null; assigneeId?: string | null; completedAt?: number | null };
 const isTaskBody = (v: unknown): v is TaskBody =>
   typeof v === 'object' && v !== null && typeof (v as TaskBody).id === 'string'
   && typeof (v as TaskBody).title === 'string' && typeof (v as TaskBody).isDone === 'boolean';
@@ -313,7 +361,7 @@ const clockOf = (ms: number, zone: string): string => new Intl.DateTimeFormat('e
 const taskRecord = (t: TaskBody, zone: string) => {
   const due = typeof t.dueAt === 'number' ? t.dueAt : 0;
   const timed = t.dueHasTime !== false;
-  return { id: t.id, title: t.title, isDone: t.isDone, notes: t.notes ?? '', dueAt: due, dueDay: due === 0 ? '' : dayKey(due, zone), dueTime: due !== 0 && timed ? clockOf(due, zone) : '', dueHasTime: timed, remindAt: t.remindAt ?? 0, flagged: t.flagged === true, recurrence: t.recurrence ?? 'none', url: t.url ?? '', priority: t.priority ?? 0, tags: tagsOf(t.tags), sectionId: t.sectionId ?? '', version: typeof t.version === 'number' ? t.version : 0, sortOrder: t.sortOrder ?? 0, subtaskCount: t.subtaskCount ?? 0, parentId: t.parentId ?? '', assigneeId: t.assigneeId ?? '', completedAt: t.completedAt ?? 0 };
+  return { id: t.id, title: t.title, isDone: t.isDone, notes: t.notes ?? '', dueAt: due, dueDay: due === 0 ? '' : dayKey(due, zone), dueTime: due !== 0 && timed ? clockOf(due, zone) : '', dueHasTime: timed, remindAt: t.remindAt ?? 0, flagged: t.flagged === true, recurrence: t.recurrence ?? 'none', url: t.url ?? '', priority: t.priority ?? 0, tags: tagsOf(t.tags), sectionId: t.sectionId ?? '', version: typeof t.version === 'number' ? t.version : 0, sortOrder: t.sortOrder ?? 0, subtaskCount: t.subtaskCount ?? 0, latestBody: t.latestNote?.body ?? '', latestBy: t.latestNote?.userId ?? '', latestAt: t.latestNote?.createdAt ?? 0, parentId: t.parentId ?? '', assigneeId: t.assigneeId ?? '', completedAt: t.completedAt ?? 0 };
 };
 
 // A task's due date, time, reminder and repeat as the API takes them (create and update share it).
@@ -728,6 +776,75 @@ const sources: Sources = {
     }
     return { ok: urls.length > 0, url: urls.join('\n'), error: urls.length > 0 && error !== '' ? 'Some images could not be uploaded.' : error };
   },
+  importNotes: async ([paths], store, storage) => {
+    let imported = 0;
+    let skipped = 0;
+    let error = '';
+    const one = async (path: string, name: string, folder: string[]): Promise<void> => {
+      if (imported + skipped >= IMPORT_MAX_FILES) return;
+      try {
+        const stat = await storage.fs.stat(path);
+        if (stat.size > IMPORT_MAX_BYTES) { skipped++; return; }
+        const text = new TextDecoder().decode(await storage.fs.readFile(path));
+        const n = noteFromText(name, text);
+        const f = folderOf(folder);
+        const r = await callWith(store, '/notes', { method: 'POST', body: JSON.stringify({ title: n.title, bodyMarkdown: n.body, ...(f !== '' ? { folder: f } : {}) }) });
+        if (r.ok) imported++;
+        else { skipped++; error = r.error; }
+      } catch {
+        skipped++;
+      }
+    };
+    const walk = async (path: string, folder: string[]): Promise<void> => {
+      let names: string[] = [];
+      try {
+        names = (await storage.fs.readdir(path)).sort();
+      } catch {
+        skipped++;
+        return;
+      }
+      for (const name of names) {
+        if (name.startsWith('.') || name === 'node_modules') continue;
+        const child = `${path}/${name}`;
+        let stat: { isFile: boolean; isDirectory: boolean; size: number };
+        try {
+          stat = await storage.fs.stat(child);
+        } catch {
+          continue;
+        }
+        if (stat.isDirectory) await walk(child, [...folder, name]);
+        else if (stat.isFile && NOTE_EXT.test(name)) await one(child, name, folder);
+      }
+    };
+    for (const path of paths.split('\n').filter((p) => p !== '')) {
+      const name = leaf(path);
+      try {
+        const stat = await storage.fs.stat(path);
+        if (stat.isDirectory) await walk(path, [name]);
+        else if (NOTE_EXT.test(name)) await one(path, name, []);
+        else skipped++;
+      } catch {
+        skipped++;
+      }
+    }
+    return { ok: imported > 0, imported, skipped, error: imported === 0 && error === '' ? 'No Markdown or text files found.' : error };
+  },
+  // The export is downloaded straight to a scratch file (the bytes never enter the module); the save panel then copies it.
+  exportNotes: async ([kind, id, folder, name], store, storage) => {
+    const safe = (name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim() || 'Notient notes').slice(0, 100);
+    const file = `${safe}.${kind === 'note' ? 'md' : 'zip'}`;
+    const path = kind === 'note' ? 'app:/tmp/export/note.md' : 'app:/tmp/export/notes.zip';
+    const url = kind === 'note' ? `/notes/${encodeURIComponent(id)}/export` : `/notes/export${kind === 'folder' && folder !== '' ? `?folder=${encodeURIComponent(folder)}` : ''}`;
+    try {
+      await storage.fs.mkdir('app:/tmp/export');
+      const res = await fetch(`${originOf(store)}${url}`, { headers: { authorization: `Bearer ${bearer(store)}` }, exactBodyTo: path, exactTimeout: 120000 } as RequestInit);
+      if (!res.ok) return { ok: false, path: '', name: file, error: res.status === 401 ? 'Sign in again.' : `The server answered ${res.status}.` };
+      return { ok: true, path, name: file, error: '' };
+    } catch (e) {
+      if ((e as { code?: string }).code === 'bake') throw e;
+      return { ok: false, path: '', name: file, error: OFFLINE };
+    }
+  },
   loadLists: async (_args, store): Promise<Result<'loadLists'>> => {
     const owner = who(store);
     if (owner === '') return { owner, lists: [] };
@@ -745,6 +862,70 @@ const sources: Sources = {
     if (icon !== '') body.icon = icon;
     if (color !== '') body.color = color;
     return reply(await callWith(store, '/task-lists', { method: 'POST', body: JSON.stringify(body) }));
+  },
+  // Templates: the built-ins, then the person's own (GET /templates). `json` is a list template's payload as text.
+  loadTemplates: async (_args, store): Promise<Result<'loadTemplates'>> => {
+    const owner = who(store);
+    if (owner === '') return { owner, notes: [], lists: [] };
+    const notes: Result<'loadTemplates'>['notes'] = BUILTIN_NOTES.map((t) => ({ id: t.id, name: t.name, blurb: t.blurb, builtin: true, title: t.title, body: t.body, json: '' }));
+    const lists: Result<'loadTemplates'>['lists'] = BUILTIN_LISTS.map((t) => ({ id: t.id, name: t.name, blurb: t.blurb, builtin: true, title: '', body: '', json: JSON.stringify(t.tpl) }));
+    const r = await callWith(store, '/templates');
+    if (r.ok) {
+      const saved = (r.body as { templates?: { id: string; kind: string; name: string; payload: Record<string, unknown> }[] }).templates ?? [];
+      for (const t of saved) {
+        if (t.kind === 'note') notes.push({ id: t.id, name: t.name, blurb: 'Your template', builtin: false, title: String(t.payload.title ?? ''), body: String(t.payload.body ?? ''), json: '' });
+        else if (t.kind === 'list') lists.push({ id: t.id, name: t.name, blurb: listSummary(t.payload as unknown as ListTpl), builtin: false, title: '', body: '', json: JSON.stringify(t.payload) });
+      }
+    }
+    return { owner, notes, lists };
+  },
+  saveNoteTemplate: async ([name, title, body], store) =>
+    reply(await callWith(store, '/templates', { method: 'POST', body: JSON.stringify({ kind: 'note', name, payload: { title, body } }) })),
+  // A list becomes a template: its sections in order and its open tasks (with their open subtasks), without dates or people.
+  saveListTemplate: async ([listId, name], store) => {
+    const r = await boardOf(store, listId);
+    if (!r.ok) return { ok: false, error: r.error };
+    const b = r.body as { sections?: { id: string; name: string; icon?: string | null; color?: string | null; sortOrder?: number | null }[]; tasks?: { id: string; title: string; sectionId?: string | null; priority?: number | null; flagged?: boolean; tags?: unknown; isDone?: boolean; sortOrder?: number | null; parentId?: string | null }[]; subtasks?: { title: string; parentId?: string | null; isDone?: boolean }[] };
+    const sections = [...(b.sections ?? [])].sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
+    const tasks = (b.tasks ?? []).filter((t) => !t.isDone && !t.parentId).sort((x, y) => (x.sortOrder ?? 0) - (y.sortOrder ?? 0));
+    const subs = (b.subtasks ?? []).filter((t) => !t.isDone);
+    const payload = {
+      sections: sections.map((x) => ({ name: x.name, icon: x.icon ?? '', color: x.color ?? '' })),
+      tasks: tasks.map((t) => ({
+        title: t.title,
+        section: sections.findIndex((x) => x.id === t.sectionId),
+        priority: Math.min(3, Math.max(0, t.priority ?? 0)),
+        flagged: t.flagged === true,
+        tags: tagsOf(t.tags),
+        subtasks: subs.filter((x) => x.parentId === t.id).map((x) => x.title),
+      })),
+    };
+    return reply(await callWith(store, '/templates', { method: 'POST', body: JSON.stringify({ kind: 'list', name, payload }) }));
+  },
+  deleteTemplate: async ([id], store) => reply(await callWith(store, `/templates/${encodeURIComponent(id)}`, { method: 'DELETE' })),
+  // A new list from a list template: the list, its sections, then its tasks and subtasks, one after another.
+  makeListFromTemplate: async ([name, json], store) => {
+    let tpl: ListTpl;
+    try {
+      tpl = JSON.parse(json) as ListTpl;
+    } catch {
+      return { ok: false, error: 'That template could not be read.', id: '' };
+    }
+    const made = await callWith(store, '/task-lists', { method: 'POST', body: JSON.stringify({ name, groceryMode: false, ...(tpl.icon ? { icon: tpl.icon } : {}), ...(tpl.color ? { color: tpl.color } : {}), ...(tpl.viewMode ? { viewMode: tpl.viewMode } : {}) }) });
+    const listId = made.ok ? String((made.body as { list?: { id?: string } }).list?.id ?? '') : '';
+    if (listId === '') return { ok: false, error: made.ok ? 'The list was not created.' : made.error, id: '' };
+    const sectionIds: string[] = [];
+    for (const [i, sec] of tpl.sections.entries()) {
+      const r = await callWith(store, '/task-sections', { method: 'POST', body: JSON.stringify({ listId, name: sec.name, sortOrder: (i + 1) * STEP, ...(sec.icon ? { icon: sec.icon } : {}), ...(sec.color ? { color: sec.color } : {}) }) });
+      sectionIds.push(r.ok ? String((r.body as { section?: { id?: string } }).section?.id ?? '') : '');
+    }
+    for (const t of tpl.tasks) {
+      const sectionId = t.section >= 0 ? sectionIds[t.section] ?? '' : '';
+      const r = await callWith(store, '/tasks', { method: 'POST', body: JSON.stringify({ listId, title: t.title, ...(sectionId !== '' ? { sectionId } : {}), ...(t.priority ? { priority: t.priority } : {}), ...(t.flagged ? { flagged: true } : {}), ...(t.tags && t.tags.length > 0 ? { tags: t.tags } : {}) }) });
+      const taskId = r.ok ? String((r.body as { task?: { id?: string } }).task?.id ?? '') : '';
+      if (taskId !== '') for (const sub of t.subtasks ?? []) await callWith(store, '/tasks', { method: 'POST', body: JSON.stringify({ listId, parentId: taskId, title: sub }) });
+    }
+    return { ok: true, error: '', id: listId };
   },
   // The name of a list's Uncategorized section ("" restores the default).
   renameUncategorized: async ([id, name], store) =>
@@ -849,7 +1030,7 @@ const sources: Sources = {
     const r = await boardOf(store, listId);
     if (!r.ok) return { owner, listId, members: [] };
     const rows = (r.body as { members?: Record<string, unknown>[] }).members ?? [];
-    return { owner, listId, members: rows.map((m) => ({ id: String(m.id ?? ''), role: String(m.role ?? ''), name: String(m.displayName || m.email || ''), email: String(m.email ?? ''), icon: String(m.avatarIcon ?? ''), color: String(m.avatarColor ?? '') })) };
+    return { owner, listId, members: rows.map((m) => ({ id: String(m.id ?? ''), role: String(m.role ?? ''), name: String(m.displayName || m.email || ''), email: String(m.email ?? ''), icon: String(m.avatarIcon ?? ''), color: String(m.avatarColor ?? ''), photo: m.avatarUrl ? `${m.avatarUrl}?v=${m.avatarUpdatedAt ?? 0}` : '' })) };
   },
   assignTask: async ([id, assigneeId], store) =>
     reply(await callWith(store, `/tasks/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ assigneeId: assigneeId === '' ? null : assigneeId }) })),
@@ -1003,6 +1184,17 @@ const sources: Sources = {
     if (!r.ok) throw new Error(r.error);
     const items = (r.body as { attachments?: { id: string; url?: string | null }[] }).attachments ?? [];
     return { owner, taskId, items: items.filter((a) => a.url).map((a) => ({ id: a.id, url: String(a.url) })) };
+  },
+  // Several images dropped at once: names and paths are newline-separated; the last failure is the one reported.
+  uploadTaskImages: async ([taskId, names, paths], store, storage) => {
+    const ns = names.split('\n');
+    let last: { ok: boolean; url: string; error: string } = { ok: false, url: '', error: '' };
+    let any = false;
+    for (const [i, path] of paths.split('\n').entries()) {
+      last = await sources.uploadTaskImage([taskId, ns[i] ?? '', path, ''], store, storage);
+      any = any || last.ok;
+    }
+    return any ? { ok: true, url: '', error: last.ok ? '' : 'Some images could not be uploaded.' } : last;
   },
   uploadTaskImage: async ([taskId, name, path, mime], store, storage) => {
     try {
@@ -1390,7 +1582,7 @@ const patchRow = (t: TaskRow, w: WriteOf, listId: string): TaskRow | null => {
   }
 };
 
-const NEW_TASK = { notes: '', dueAt: 0, dueDay: '', dueTime: '', dueHasTime: false, remindAt: 0, flagged: false, recurrence: 'none', url: '', priority: 0, tags: [] as string[], version: 0, sortOrder: 0, subtaskCount: 0, parentId: '', assigneeId: '', completedAt: 0 };
+const NEW_TASK = { notes: '', dueAt: 0, dueDay: '', dueTime: '', dueHasTime: false, remindAt: 0, flagged: false, recurrence: 'none', url: '', priority: 0, tags: [] as string[], version: 0, sortOrder: 0, subtaskCount: 0, latestBody: '', latestBy: '', latestAt: 0, parentId: '', assigneeId: '', completedAt: 0 };
 
 // A write's new task, as the screen will show it until the server's own row arrives (its id is not the server's).
 const newRowOf = (w: WriteOf, listId: string): TaskRow | null => {

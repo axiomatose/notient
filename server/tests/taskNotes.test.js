@@ -47,6 +47,15 @@ describe("task notes", () => {
     expect(typeof res.body.notes[0].createdAt).toBe("number");
   });
 
+  it("puts the newest note on the task's list row, with its author's id", async () => {
+    await agent.post(`/tasks/${taskId}/notes`).set(owner.auth).send({ body: "First" });
+    await agent.post(`/tasks/${taskId}/notes`).set(friend.auth).send({ body: "Latest" });
+    const list = await agent.get(`/tasks`).set(owner.auth);
+    const row = list.body.tasks.find((x) => x.id === taskId);
+    expect(row.latestNote.body).toBe("Latest");
+    expect(row.latestNote.userId).toBe(friend.id);
+  });
+
   it("refuses an empty note and a stranger", async () => {
     expect((await agent.post(`/tasks/${taskId}/notes`).set(owner.auth).send({ body: "  " })).status).toBe(400);
     expect((await agent.get(`/tasks/${taskId}/notes`).set(stranger.auth)).status).toBeGreaterThanOrEqual(403);

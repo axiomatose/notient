@@ -75,6 +75,8 @@ function mapRow(row) {
     // Only set on list rows (listStmt), so other responses omit it.
     subtaskCount:
       row.subtask_count === undefined ? undefined : Number(row.subtask_count),
+    // The newest note of the task's thread (list rows only): the card's subtext.
+    latestNote: row.last_note_at ? { body: row.last_note_body ?? "", userId: row.last_note_user ?? null, createdAt: row.last_note_at } : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deletedAt: coerceNullableNumber(row.deleted_at),
@@ -160,7 +162,10 @@ function comparePriority(existingRow, incomingRow, incomingDeviceId) {
 export function createTasksRepository(db) {
   const listStmt = db.prepare(`
     SELECT ${TASK_COLUMNS},
-      (SELECT COUNT(*) FROM tasks c WHERE c.parent_id = tasks.id AND c.deleted_at IS NULL) AS subtask_count
+      (SELECT COUNT(*) FROM tasks c WHERE c.parent_id = tasks.id AND c.deleted_at IS NULL) AS subtask_count,
+      (SELECT body FROM task_notes WHERE task_id = tasks.id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_note_body,
+      (SELECT user_id FROM task_notes WHERE task_id = tasks.id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_note_user,
+      (SELECT created_at FROM task_notes WHERE task_id = tasks.id ORDER BY created_at DESC, rowid DESC LIMIT 1) AS last_note_at
     FROM tasks
     WHERE user_id = @userId
       AND (@includeDeleted = 1 OR deleted_at IS NULL)
