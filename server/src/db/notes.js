@@ -75,7 +75,7 @@ function normalizeIncoming(payload, { userId, deviceId }) {
       created_at: createdAt,
       updated_at: updatedAt,
       deleted_at:
-        typeof payload.deletedAt === "number" ? payload.deletedAt : null,
+        typeof payload.deletedAt === "number" && payload.deletedAt > 0 ? payload.deletedAt : null,
       version:
         typeof payload.version === "number" && payload.version > 0
           ? payload.version
@@ -122,7 +122,7 @@ export function createNotesRepository(db, config) {
     SELECT ${NOTE_COLUMNS}
     FROM notes
     WHERE user_id = @userId
-      AND (@includeDeleted = 1 OR deleted_at IS NULL)
+      AND (@includeDeleted = 1 OR deleted_at IS NULL OR deleted_at = 0)
     ORDER BY updated_at DESC
   `);
 
@@ -395,7 +395,7 @@ export function createNotesRepository(db, config) {
         deleted_at:
           data.deletedAt === undefined
             ? current.deleted_at
-            : coerceNullableNumber(data.deletedAt),
+            : coerceNullableNumber(data.deletedAt) || null,
         version: current.version + 1,
         updated_by: deviceId ?? current.updated_by,
         current_user_id: userId,
