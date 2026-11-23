@@ -830,19 +830,20 @@ const sources: Sources = {
     return { ok: imported > 0, imported, skipped, error: imported === 0 && error === '' ? 'No Markdown or text files found.' : error };
   },
   // The export is downloaded straight to a scratch file (the bytes never enter the module); the save panel then copies it.
-  exportNotes: async ([kind, id, folder, name], store, storage) => {
+  exportNotes: async ([kind, id, folder, name, vaults], store, storage) => {
     const safe = (name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim() || 'Notient notes').slice(0, 100);
     const file = `${safe}.${kind === 'note' ? 'md' : 'zip'}`;
     const path = kind === 'note' ? 'app:/tmp/export/note.md' : 'app:/tmp/export/notes.zip';
-    const url = kind === 'note' ? `/notes/${encodeURIComponent(id)}/export` : `/notes/export${kind === 'folder' && folder !== '' ? `?folder=${encodeURIComponent(folder)}` : ''}`;
+    const query = [kind === 'folder' && folder !== '' ? `folder=${encodeURIComponent(folder)}` : '', String(vaults) === 'true' ? 'includeVaults=1' : ''].filter((q) => q !== '').join('&');
+    const url = kind === 'note' ? `/notes/${encodeURIComponent(id)}/export` : `/notes/export${query === '' ? '' : `?${query}`}`;
     try {
       await storage.fs.mkdir('app:/tmp/export');
       const res = await fetch(`${originOf(store)}${url}`, { headers: { authorization: `Bearer ${bearer(store)}` }, exactBodyTo: path, exactTimeout: 120000 } as RequestInit);
-      if (!res.ok) return { ok: false, path: '', name: file, error: res.status === 401 ? 'Sign in again.' : `The server answered ${res.status}.` };
-      return { ok: true, path, name: file, error: '' };
+      if (!res.ok) return { ok: false, path: '', name: file, error: res.status === 401 ? 'Sign in again.' : `The server answered ${res.status}.`, count: 0, skipped: 0 };
+      return { ok: true, path, name: file, error: '', count: Number(res.headers.get('x-notes-exported') ?? (kind === 'note' ? '1' : '0')), skipped: Number(res.headers.get('x-vault-skipped') ?? '0') };
     } catch (e) {
       if ((e as { code?: string }).code === 'bake') throw e;
-      return { ok: false, path: '', name: file, error: OFFLINE };
+      return { ok: false, path: '', name: file, error: OFFLINE, count: 0, skipped: 0 };
     }
   },
   loadLists: async (_args, store): Promise<Result<'loadLists'>> => {

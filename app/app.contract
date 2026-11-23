@@ -127,6 +127,8 @@ shape ExportReply
   path: string
   name: string
   error: string
+  count: number
+  skipped: number
 
 shape ImageReply
   ok: bool
@@ -1695,22 +1697,36 @@ component App
       case none
         templateNotice = templateNotice
   // Export: one note, one folder (with its subfolders) or the whole library, downloaded then handed to the save panel.
-  action exportNow(kind: string, id: string, folder: string, name: string)
+  action exportNow(kind: string, id: string, folder: string, name: string, vaults: bool)
     if not pending(exportMade)
       templateNotice = "Preparing the export…"
-      send exportMade = exportNotes(kind, id, folder, name)
+      send exportMade = exportNotes(kind, id, folder, name, vaults)
   action exportThisNote
     if editorNoteId != ""
-      exportNow("note", editorNoteId, "", editorTitle.trim() == "" ? "Untitled" : editorTitle.trim())
-  action exportThisFolder
-    exportNow("folder", "", folderFilter, lastSegment(folderFilter))
+      exportNow("note", editorNoteId, "", editorTitle.trim() == "" ? "Untitled" : editorTitle.trim(), true)
+  // A folder or the library asks first whether vault notes come along (they leave out otherwise, and are named vault-…).
+  state exportKind = ""
+  state exportVaults = false
+  action exportShown
+    exportKind = folderFilter != "" ? "folder" : "library"
+    exportVaults = false
+    showModal("export-options")
   action exportLibrary
-    exportNow("library", "", "", "Notient notes")
+    exportKind = "library"
+    exportVaults = false
+    showModal("export-options")
+  action setExportVaults(v: bool)
+    exportVaults = v
+  action confirmExport
+    if exportKind == "folder"
+      exportNow("folder", "", folderFilter, lastSegment(folderFilter), exportVaults)
+    else
+      exportNow("library", "", "", "Notient notes", exportVaults)
   action afterExport
     match exportMade
       case some(r)
         if r.ok
-          templateNotice = ""
+          templateNotice = `Exported ${r.count} note${r.count == 1 ? "" : "s"}${r.skipped > 0 ? `; left out ${r.skipped} vault note${r.skipped == 1 ? "" : "s"}` : ""}`
           saveFile("export-save", r.path, r.name)
         else
           templateNotice = `Couldn’t export. (${r.error})`
@@ -2147,6 +2163,10 @@ component App
                         column width="min(60rem, calc(100% - 3rem))" margin="0 auto" padding="32px 0px" gap=16 testId="notes-recent"
                           row gap=12 align-items="center"
                             text "Pick up where you left off" font="-exact-title2" flex=1 min-width=0 role="heading" aria-level=1
+                            button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="file" disabled=pending(exportMade) testId="export-notes-pane"
+                              row gap=6 align-items="center"
+                                LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=16)
+                                text "Export"
                             button press=openNewNote buttonStyle="filled" testId="pane-add-note"
                               text "New Note"
                           row flex-wrap="wrap" gap=12
@@ -2170,6 +2190,9 @@ component App
                         image "symbol:document"
                       button press=openNewNote aria-label="New Note" testId="add-note"
                         image "symbol:compose"
+                      if wide
+                        button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes-wide"
+                          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
                       button press=openTrash aria-label="Trash" testId="open-trash"
                         image "symbol:delete"
                     row gap=8 align-items="center" flex-wrap="wrap" padding="8px 16px" testId="notes-toolbar"
@@ -2187,10 +2210,10 @@ component App
                           image "symbol:filter"
                         button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
                           image "symbol:sort"
+                        button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
+                          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
                         if folderFilter != ""
                           text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
-                          button press=exportThisFolder aria-label="Export this folder" testId="export-folder" disabled=pending(exportMade)
-                            image "symbol:share"
                         if tagFilter != ""
                           text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
                     if not sameOwner
@@ -3084,7 +3107,7 @@ component App
             ServerLine(host=serverCheck.host, state=serverCheck.state)
         button role="menuitem" press=openSettings popovertarget="persona-menu" popovertargetaction="hide" testId="menu-settings"
           text "Settings"
-        button role="menuitem" press=exportLibrary popovertarget="persona-menu" popovertargetaction="hide" testId="menu-export-library"
+        button role="menuitem" press=exportLibrary popovertarget="persona-menu" popovertargetaction="hide" -exact-menu="file" aria-label="Export All Notes…" testId="menu-export-library"
           text "Export all notes"
         button role="menuitem" press=doSignOut popovertarget="persona-menu" popovertargetaction="hide" testId="sign-out"
           text "Sign Out"
@@ -3129,6 +3152,18 @@ component App
                   image u width=64 height=48 object-fit="cover" border-radius=4
         button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
           image "symbol:close"
+      dialog id="export-options" aria-label="Export notes" padding=20 testId="export-options"
+        column gap=12 min-width="18rem"
+          text (exportKind == "folder" ? `Export “${lastSegment(folderFilter)}”` : "Export all notes") font="-exact-headline"
+          text "Notes are saved as Markdown files in folders, in a zip." color="-exact-secondary-label" font="-exact-footnote"
+          row gap=8 align-items="center"
+            input type="checkbox" checked=exportVaults change=setExportVaults aria-label="Include vault notes" testId="export-vaults"
+            text "Include vault notes (named vault-…)"
+          row gap=8 justify-content="flex-end"
+            button commandfor="export-options" command="close" testId="export-cancel"
+              text "Cancel"
+            button press=confirmExport commandfor="export-options" command="close" buttonStyle="filled" testId="export-confirm"
+              text "Export"
       dialog id="delete-task" role="alertdialog" aria-label="Delete Task?"
         text "The task and its subtasks move away. This can’t be undone."
         button press=removeTaskNow destructive=true commandfor="delete-task" command="close" testId="delete-task-confirm"
@@ -4336,8 +4371,8 @@ component NoteEditor
           image "symbol:lock"
         button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin"
           image "symbol:pin"
-        button press=exportIt aria-label="Export note" testId="note-export" disabled=(noteId == "")
-          image "symbol:share"
+        button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
+          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
         button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
           LucideIcon(paths=["M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4 14h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M17 14h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"], color="-exact-label", size=18)
         button press=share(noteId) aria-label="Share" testId="note-share"

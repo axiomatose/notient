@@ -90,6 +90,17 @@ describe("notes on disk and export", () => {
     expect(zipOf(await zip("?folder=Work"))).toEqual(["Work/2024/Deep.md", "Work/Plan (2).md", "Work/Plan.md"]);
   });
 
+  it("leaves vault notes out of a library or folder export unless asked, and names them vault-", async () => {
+    await add({ title: "Plain", bodyMarkdown: "p" });
+    const v = await add({ title: "Codes", bodyMarkdown: "secret", tags: ["vault"], folder: "Safe" });
+    const zip = (q) => agent.get(`/notes/export${q}`).set(auth).buffer(true).parse((r, cb) => { const c = []; r.on("data", (d) => c.push(d)); r.on("end", () => cb(null, Buffer.concat(c))); });
+    expect(zipOf(await zip(""))).toEqual(["Plain.md"]);
+    expect(zipOf(await zip("?includeVaults=1"))).toEqual(["Plain.md", "Safe/vault-Codes.md"]);
+    expect(zipOf(await zip("?folder=Safe"))).toEqual([]);
+    const one = await agent.get(`/notes/${v.id}/export`).set(auth);
+    expect(one.headers["content-disposition"]).toContain("vault-Codes.md");
+  });
+
   it("exports only the signed-in person's notes", async () => {
     await add({ title: "Mine", bodyMarkdown: "m" });
     const o = await agent.post("/auth/register").send({ email: `o-${nanoid(6)}@example.com`, password: "Passw0rd!23", deviceName: "d" });

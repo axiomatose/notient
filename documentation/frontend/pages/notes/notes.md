@@ -108,7 +108,7 @@ GET /notes/:id/export           → one .md ("# Title" + body)
 GET /notes/export?folder=A/B    → zip of that folder and its subfolders, laid out as folders
 GET /notes/export               → zip of the whole library
 ```
-Entry names are the note titles (`Title (2).md` on repeats). App: `exportNotes` source downloads to `app:/tmp/export/` (`exactBodyTo`) then `saveFile`; UI: `note-export` (editor), `export-folder` (toolbar, with a folder filter), persona menu "Export all notes".
+Entry names are the note titles (`Title (2).md` on repeats). App: `exportNotes` source downloads to `app:/tmp/export/` (`exactBodyTo`) then `saveFile`; UI: `note-export` (editor), `export-notes` (toolbar: folder with a folder filter, else library; also File ▸ Export on the Mac), persona menu "Export all notes".
 
 **Import Notes**
 

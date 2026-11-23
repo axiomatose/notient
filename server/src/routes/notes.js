@@ -74,6 +74,8 @@ const exportText = (note) => {
   const body = String(note.bodyMarkdown ?? "");
   return title === "" ? body : `# ${title}\n\n${body.replace(/^\n+/, "")}`;
 };
+// A note tagged `vault` hides its secrets in the app; a library or folder export leaves those out unless asked.
+const isVault = (note) => Array.isArray(note.tags) && note.tags.includes("vault");
 const inFolder = (folder, root) => {
   const f = String(folder ?? "");
   return f === root || f.startsWith(`${root}/`);
@@ -118,7 +120,11 @@ export function createNotesRouter({ repos, requireAuth }) {
       const { userId } = req.auth;
       const folder = typeof req.query.folder === "string" ? req.query.folder.trim() : "";
       const mine = repos.notes.list({ userId, includeDeleted: false }).filter((n) => n.userId === userId);
-      const picked = folder === "" ? mine : mine.filter((n) => inFolder(n.folder, folder));
+      const withVaults = req.query.includeVaults === "1" || req.query.includeVaults === "true";
+      const inScope = folder === "" ? mine : mine.filter((n) => inFolder(n.folder, folder));
+      const picked = inScope.filter((n) => withVaults || !isVault(n));
+      res.setHeader("x-notes-exported", String(picked.length));
+      res.setHeader("x-vault-skipped", String(inScope.length - picked.length));
       const label = safeName(folder === "" ? "Notient notes" : folder.split("/").at(-1), "Notient notes");
       res.setHeader("content-type", "application/zip");
       res.setHeader("content-disposition", `attachment; filename="${label}.zip"`);
@@ -126,17 +132,24 @@ export function createNotesRouter({ repos, requireAuth }) {
       zip.on("error", next);
       zip.pipe(res);
       const used = new Set();
+      let failed = 0;
       for (const n of picked) {
-        const dir = String(n.folder ?? "")
-          .split("/")
-          .map((p) => safeName(p, ""))
-          .filter((p) => p !== "")
-          .join("/");
-        const base = safeName(n.title, "Untitled");
-        let name = `${dir === "" ? "" : `${dir}/`}${base}`;
-        for (let k = 2; used.has(name.toLowerCase()); k++) name = `${dir === "" ? "" : `${dir}/`}${base} (${k})`;
-        used.add(name.toLowerCase());
-        zip.append(exportText(n), { name: `${name}.md`, date: new Date(n.updatedAt || Date.now()) });
+        try {
+          const dir = String(n.folder ?? "")
+            .split("/")
+            .map((p) => safeName(p, ""))
+            .filter((p) => p !== "")
+            .join("/");
+          const base = `${isVault(n) ? "vault-" : ""}${safeName(n.title, "Untitled")}`;
+          let name = `${dir === "" ? "" : `${dir}/`}${base}`;
+          for (let k = 2; used.has(name.toLowerCase()); k++) name = `${dir === "" ? "" : `${dir}/`}${base} (${k})`;
+          used.add(name.toLowerCase());
+          const when = new Date(n.updatedAt);
+          zip.append(exportText(n), { name: `${name}.md`, ...(Number.isNaN(when.getTime()) ? {} : { date: when }) });
+        } catch (e) {
+          failed++;
+          console.error("export: skipped a note", n.id, e);
+        }
       }
       zip.finalize();
     } catch (error) {
@@ -153,7 +166,7 @@ export function createNotesRouter({ repos, requireAuth }) {
         return;
       }
       res.setHeader("content-type", "text/markdown; charset=utf-8");
-      res.setHeader("content-disposition", `attachment; filename="${safeName(note.title, "Untitled")}.md"`);
+      res.setHeader("content-disposition", `attachment; filename="${isVault(note) ? "vault-" : ""}${safeName(note.title, "Untitled")}.md"`);
       res.send(exportText(note));
     } catch (error) {
       next(error);
