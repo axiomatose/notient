@@ -645,4 +645,17 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id, kind, created_at);
     `,
   },
+  {
+    id: 38,
+    name: "add_note_folders",
+    up: `
+      CREATE TABLE IF NOT EXISTS note_folders (
+        user_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (user_id, path),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `,
+  },
 ];

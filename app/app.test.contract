@@ -2406,6 +2406,120 @@ test "a card dragged into the Done column finishes it, and finishing a task move
   clock settle
   expect state doneQuery == "zzz"
 
+test "a finished card dropped inside the Done column stays where it was"
+  type "email" "done2@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "tab-tasks"
+  clock settle
+  tap "new-list-button"
+  clock settle
+  type "edit-list-name" "Ship"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Ship"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "Done"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-fab-add-task"
+  clock settle
+  type "list-quick-title" "Pack"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  type "list-quick-title" "Label"
+  type "list-quick-title" key "Enter"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  tap "Hold and drag Pack to reorder" contextmenu
+  clock settle
+  tap "grp-section"
+  tap "Move to Done"
+  clock data
+  clock settle
+  tap "Hold and drag Label to reorder" contextmenu
+  clock settle
+  tap "grp-section"
+  tap "Move to Done"
+  clock data
+  clock settle
+  expect text "board-count-none" == "0"
+  // Pack finished first, Label after it: a drop inside Done sends nothing, so Pack is not re-stamped.
+  tap "Hold and drag Pack to reorder" drag to "Hold and drag Label to reorder"
+  clock settle
+  clock data
+  clock settle
+  expect state tasks.tasks.0 .title == "Pack"
+  expect state tasks.tasks.1 .completedAt >= state tasks.tasks.0 .completedAt
+
+test "a nested folder shows under its parent and folds with it"
+  type "email" "tree1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Tr"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "add-note"
+  clock settle
+  type "note-title" "Deep note"
+  type "note-body" "x"
+  tap "note-folder-button"
+  clock settle
+  type "note-folder" "Dev/Auth"
+  tap "note-save"
+  clock data
+  clock settle
+  expect tree has "folder-Dev"
+  expect tree has "folder-Dev/Auth"
+  expect text "folder-Dev/Auth" == "Auth"
+  tap "folder-toggle-Dev"
+  clock settle
+  expect state shutFolders == "Dev"
+  expect tree missing "folder-Dev/Auth"
+
+test "a folder is made from the notes home, inside a parent, before any note is filed in it"
+  type "email" "mkfolder@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Mk"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "new-note-folder"
+  clock settle
+  type "new-folder-name" "Dev"
+  tap "new-folder-create"
+  clock data
+  clock settle
+  expect state lib.folders.0 == "Dev"
+  tap "new-note-folder"
+  clock settle
+  type "new-folder-name" "Auth"
+  type "new-folder-parent" "Dev"
+  tap "new-folder-create"
+  clock data
+  clock settle
+  expect state lib.folders.1 == "Dev/Auth"
+
 test "on a wide window a task opens as a bottom drawer over its list"
   size 1280x800
   type "email" "drawer1@example.com"

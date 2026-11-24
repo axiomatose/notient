@@ -591,6 +591,12 @@ fn matchesNote(n: Note, q: string): bool = q.trim() == "" or n.title.toLowerCase
 fn lastSegment(p: string): string = match p.split("/").filter(x => x != "").at(-1) { case some(x) => x, case none => p }
 fn isImagePath(p: string): bool = [".png", ".jpg", ".jpeg", ".gif", ".webp"].filter(x => p.toLowerCase().endsWith(x)).length > 0
 fn folderLabel(f: string): string = f == "" ? "Unfiled" : f
+// A folder path is "A/B/C": its depth, its own name, and whether a note sits in it or below it.
+fn folderDepth(f: string): number = f == "" ? 0 : f.split("/").length - 1
+fn underFolder(n: Note, f: string): bool = n.folder == f or n.folder.startsWith(f + "/")
+// Collapsed folders are kept as one string, paths joined by "|" (names have spaces).
+fn folderShut(csv: string, f: string): bool = f != "" and ("|" + csv + "|").indexOf("|" + f + "|") >= 0
+fn insideShut(csv: string, f: string): bool = csv.split("|").filter(c => c != "" and f.startsWith(c + "/")).length > 0
 // Day timeline geometry: 56px per hour, positions and heights from minutes past local midnight.
 fn minutesPx(m: number): number = m * 56 / 60
 fn blockTop(ev: EventRow): number = minutesPx(ev.startMin)
@@ -697,6 +703,9 @@ component App
   state editorPinned = false
   state lastEdit = 0
   state folderFilter = ""
+  state shutFolders = ""
+  state newFolderName = ""
+  state newFolderParent = "-"
   state tagFilter = ""
   state noteSort = "newest"
   state doomedNote = ""
@@ -909,7 +918,7 @@ component App
   derive editorWordCount = editorBody.trim() == "" ? 0 : editorBody.trim().split("\n").map(l => l.split(" ")).flat().filter(w => w != "").length
   derive deletedNotes = lib.notes.filter(n => n.deletedAt != 0)
   derive sortedActive = noteSort == "oldest" ? sortBy(activeNotes, n => n.updatedAt) : noteSort == "title" ? sortBy(activeNotes, n => n.title.toLowerCase()) : sortBy(activeNotes, n => n.updatedAt, "desc")
-  derive sectionFolders = folderFilter == "" ? lib.folders.concat([""]) : [folderFilter]
+  derive sectionFolders = folderFilter == "" ? lib.folders.concat([""]) : lib.folders.filter(x => x == folderFilter or x.startsWith(folderFilter + "/"))
   derive notesShown = sortedActive.filter(n => matchesFilter(n, notesQuery, tagFilter))
   derive sharedSame = shared.owner == session.email and session.email != ""
   derive notesError = pending(lib) ? "" : match failure(lib) { case some(f) => "Couldn’t refresh the notes. (" + f.code + ": " + f.message + ")", case none => "" }
@@ -1010,6 +1019,7 @@ component App
   mutation taskImageR as shape ImageReply refreshes attachments
   mutation listAdded as shape Reply queue refreshes lists then afterListAdd
   mutation templateSaved as shape Reply refreshes templates then afterTemplateSaved
+  mutation folderMade as shape Reply refreshes lib then afterFolderMade
   mutation templateDeleted as shape Reply refreshes templates
   mutation listMade as shape ListMade queue refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterListMade
   mutation noneRenamed as shape Reply queue refreshes lists then afterNoneRename
@@ -1338,6 +1348,9 @@ component App
     tagFilter = t
   action setFolderFilter(f: string)
     folderFilter = f
+  // A folder header folds or unfolds its notes and subfolders.
+  action toggleFolderOpen(f: string)
+    shutFolders = folderShut(shutFolders, f) ? shutFolders.split("|").filter(x => x != f).join("|") : (shutFolders == "" ? f : shutFolders + "|" + f)
   action setSort(v: string)
     noteSort = v
   // A new note is the full editor on a blank draft: the server creates it when there is something to keep
@@ -1606,8 +1619,11 @@ component App
     send taskNoteRemoved = removeTaskNote(taskId, noteId)
   action addTaskImage(taskId: string, name: string, path: string, mime: string)
     send taskImageR = uploadTaskImage(taskId, name, path, mime)
+  // Done is ordered by completion time, so a card dropped back inside Done has nowhere new to go: nothing is sent and
+  // the host returns it to where it was (a placeTask would only write a sort order the column ignores).
   action dropTask(key: string, before: option<string>, e: ReorderEvent)
-    send taskDropped = placeTask(openList, key, boardSection(e.to), orEmpty(before), doneSectionId == "" ? "" : boardSection(e.to) == doneSectionId ? "done" : "open")
+    if doneSectionId == "" or boardSection(e.from) != doneSectionId or boardSection(e.to) != doneSectionId
+      send taskDropped = placeTask(openList, key, boardSection(e.to), orEmpty(before), doneSectionId == "" ? "" : boardSection(e.to) == doneSectionId ? "done" : "open")
   action dropSection(key: string, before: option<string>)
     send sectionMoved = placeSection(openList, key, orEmpty(before))
   action openSectionOrder
@@ -1730,6 +1746,25 @@ component App
           saveFile("export-save", r.path, r.name)
         else
           templateNotice = `Couldn’t export. (${r.error})`
+      case none
+        templateNotice = templateNotice
+  // A new folder is made from the notes home, so it can exist before a note is filed in it; the parent is optional.
+  action openNewFolder
+    newFolderName = ""
+    newFolderParent = folderFilter == "" ? "-" : folderFilter
+    showModal("new-folder")
+  action editNewFolderName(v: string)
+    newFolderName = v
+  action pickNewFolderParent(v: string)
+    newFolderParent = v
+  action createFolder
+    if newFolderName.trim() != "" and not pending(folderMade)
+      send folderMade = makeNoteFolder(newFolderName.trim(), newFolderParent == "-" ? "" : newFolderParent)
+  action afterFolderMade
+    match folderMade
+      case some(r)
+        if not r.ok
+          templateNotice = `Couldn’t make the folder. (${r.error})`
       case none
         templateNotice = templateNotice
   action afterTemplateSaved
@@ -2140,7 +2175,7 @@ component App
                 button press=crumbMode appearance="none" pointer-events="auto" testId="crumb-mode"
                   text (editorMode == "edit" ? "Edit" : "View") font="-exact-subheadline" color="AccentColor"
         if sideOpen
-          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold)
+          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
       column flex=1 min-width=0 min-height=0 position="relative" margin-top=0
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -2210,6 +2245,8 @@ component App
                           image "symbol:filter"
                         button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
                           image "symbol:sort"
+                        button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
+                          LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=18)
                         button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
                           LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
                         if folderFilter != ""
@@ -2241,11 +2278,15 @@ component App
                             row
                               text "Offline — showing your saved notes." color="-exact-secondary-label" testId="stale-note"
                         for f in sectionFolders key=f
-                          if sortedActive.filter(n => inFolder(n, f) and matchesFilter(n, notesQuery, tagFilter)).length > 0
+                          if sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, notesQuery, tagFilter)).length > 0 and not insideShut(shutFolders, f)
                             section
                               header
-                                text folderLabel(f) testId=`folder-${f}`
-                              for n in sortedActive.filter(n => inFolder(n, f) and matchesFilter(n, notesQuery, tagFilter)) key=n.id
+                                button press=toggleFolderOpen(f) disabled=(f == "") appearance="none" padding-left=(folderDepth(f) * 16) aria-label=(f == "" ? "Unfiled" : folderShut(shutFolders, f) ? `Expand ${f}` : `Collapse ${f}`) testId=`folder-toggle-${f}`
+                                  row gap=6 align-items="center"
+                                    if f != ""
+                                      image "symbol:forward-chevron" width=11 height=11 transform=(folderShut(shutFolders, f) ? "rotate(0deg)" : "rotate(90deg)")
+                                    text (f == "" ? "Unfiled" : lastSegment(f)) testId=`folder-${f}`
+                              for n in sortedActive.filter(n => inFolder(n, f) and not folderShut(shutFolders, f) and matchesFilter(n, notesQuery, tagFilter)) key=n.id
                                 button press=openNote(n.id) testId=`note-${n.id}` contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                                   column flex=1 min-width=0 gap=2 padding-top=4 padding-bottom=4
                                     text (n.title.trim() == "" ? "Untitled" : n.title) font-weight=600
@@ -3009,7 +3050,7 @@ component App
           text "All folders"
         for f in lib.folders key=f
           button role="menuitem" press=setFolderFilter(f) popovertarget="folder-menu" popovertargetaction="hide" testId=`folder-menu-${f}`
-            text f
+            text lastSegment(f) padding-left=(folderDepth(f) * 14)
       column id="sort-menu" popover="auto" role="menu" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="sort-menu"
         button role="menuitem" press=setSort("newest") popovertarget="sort-menu" popovertargetaction="hide" testId="sort-newest"
           text "Newest"
@@ -3152,6 +3193,21 @@ component App
                   image u width=64 height=48 object-fit="cover" border-radius=4
         button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
           image "symbol:close"
+      dialog id="new-folder" aria-label="New folder" padding=20 testId="new-folder"
+        column gap=12 min-width="18rem"
+          text "New folder" font="-exact-headline"
+          input value=newFolderName input=editNewFolderName placeholder="Folder name" aria-label="Folder name" testId="new-folder-name" appearance="none"
+          row gap=8 align-items="center"
+            text "Inside"
+            select value=newFolderParent change=pickNewFolderParent aria-label="Parent folder" testId="new-folder-parent" flex=1 min-width=0
+              option "None (top level)" value="-"
+              for f in lib.folders key=f
+                option f value=f
+          row gap=8 justify-content="flex-end"
+            button commandfor="new-folder" command="close" testId="new-folder-cancel"
+              text "Cancel"
+            button press=createFolder commandfor="new-folder" command="close" buttonStyle="filled" disabled=(newFolderName.trim() == "") testId="new-folder-create"
+              text "Create"
       dialog id="export-options" aria-label="Export notes" padding=20 testId="export-options"
         column gap=12 min-width="18rem"
           text (exportKind == "folder" ? `Export “${lastSegment(folderFilter)}”` : "Export all notes") font="-exact-headline"
@@ -4523,6 +4579,7 @@ component DesktopSidebar
     toggleTasks: action
     toggleTasksTall: action
     toggleFold: action
+    newFolder: action
   view
     column testId="sidebar" width="21rem" height="100%" flex-shrink=0 box-sizing="border-box" padding=12 gap=6 display="flex" flex-direction="column" background-color="light-dark(#eef1f6, #1a1c21)"
       view testId="sidebar-top" height=32 flex-shrink=0
@@ -4544,6 +4601,8 @@ component DesktopSidebar
                 input type="search" value=query input=search placeholder="Search notes and tags" aria-label="Search notes" testId="side-search" tabindex=-1 flex=1 min-width=0 appearance="none"
                 button popovertarget="sort-menu" aria-label="Sort" testId="side-sort" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
                   image "symbol:sort" width=16 height=16
+                button press=newFolder aria-label="New Folder" testId="side-new-note-folder" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
+                  LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=16)
               column gap=1 padding-left=38 max-height=(notesTall ? "none" : "16rem") overflow=(notesTall ? "visible" : "hidden auto") testId="side-notes-tree"
                 if notes.length == 0
                   text (query.trim() == "" ? "No notes yet." : "No matches.") flex-shrink=0 font="-exact-footnote" color="-exact-secondary-label" padding="4px 8px" testId="side-notes-empty"

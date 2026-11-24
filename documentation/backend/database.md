@@ -345,3 +345,7 @@ FK: user_id → users(id) CASCADE
 ## Related
 - [services/sync.md](services/sync.md) - Sync protocol
 - [services/auth.md](services/auth.md) - User authentication
+
+## note_folders (migration 38)
+`(user_id, path)` PK, `created_at`. Folders made on purpose so they exist before any note is filed in them; a note's folder stays a path on the note. `GET /note-folders` → `{folders}`; `POST /note-folders {name, parent?}` → `{path}` (name has no `/`, `.` or `..`). Repo `repos.noteFolders` (`src/db/noteFolders.js`), route `src/routes/noteFolders.js`.
+

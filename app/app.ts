@@ -417,6 +417,16 @@ const eventFields = (title: string, notes: string, url: string, location: string
   attendees: attendees.filter((a) => a.includes('@')),
 });
 
+// A folder path "A/B/C" implies "A" and "A/B": the folder list carries every level, parents before their children.
+const withAncestors = (folders: string[]): string[] => {
+  const all = new Set<string>();
+  for (const f of folders) {
+    const parts = f.split('/');
+    for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('/'));
+  }
+  return [...all].sort((a, b) => a.split('/').join('\u0000').toLowerCase().localeCompare(b.split('/').join('\u0000').toLowerCase()));
+};
+
 // The last good answer for the signed-in account, kept for a lost connection.
 const CACHE = 'app:/data/notes-cache.json';
 type NoteRow = Result<'loadNotes'>['notes'][number];
@@ -425,7 +435,7 @@ async function readCache(storage: Storage, owner: string): Promise<Cached | null
   try {
     const parsed = JSON.parse(new TextDecoder().decode(await storage.fs.readFile(CACHE))) as Cached;
     if (parsed && parsed.owner === owner && Array.isArray(parsed.notes) && Array.isArray(parsed.folders) && Array.isArray(parsed.tags)) {
-      return parsed;
+      return { ...parsed, folders: withAncestors(parsed.folders) };
     }
   } catch { /* no cache yet */ }
   return null;
@@ -685,7 +695,10 @@ const sources: Sources = {
     const notes = body.notes
       .map((n) => ({ id: n.id, title: n.title, body: markdownOf(n.bodyMarkdown, n.body), isPinned: n.isPinned === true, tags: tagsOf(n.tags), folder: n.folder ?? '', updatedAt: n.updatedAt, deletedAt: n.deletedAt ?? 0, version: typeof n.version === 'number' ? n.version : 0 }))
       .sort((a, b) => (a.isPinned === b.isPinned ? b.updatedAt - a.updatedAt : a.isPinned ? -1 : 1));
-    const folders = [...new Set(notes.filter((n) => n.folder !== '' && n.deletedAt === 0).map((n) => n.folder))].sort();
+    // Folders made on purpose come along (an older server has none: that is no failure).
+    const made = await callWith(store, '/note-folders');
+    const extra = made.ok && Array.isArray((made.body as { folders?: unknown }).folders) ? ((made.body as { folders: unknown[] }).folders.filter((f) => typeof f === 'string') as string[]) : [];
+    const folders = withAncestors([...new Set([...notes.filter((n) => n.folder !== '' && n.deletedAt === 0).map((n) => n.folder), ...extra])]);
     const tags = [...new Set(notes.filter((n) => n.deletedAt === 0).flatMap((n) => n.tags))].sort();
     const answer = { owner, notes, folders, tags };
     await writeCache(storage, answer);
@@ -880,6 +893,9 @@ const sources: Sources = {
     }
     return { owner, notes, lists };
   },
+  // A folder made on purpose, before any note is filed in it; the parent path is optional.
+  makeNoteFolder: async ([name, parent], store) =>
+    reply(await callWith(store, '/note-folders', { method: 'POST', body: JSON.stringify({ name, parent }) })),
   saveNoteTemplate: async ([name, title, body], store) =>
     reply(await callWith(store, '/templates', { method: 'POST', body: JSON.stringify({ kind: 'note', name, payload: { title, body } }) })),
   // A list becomes a template: its sections in order and its open tasks (with their open subtasks), without dates or people.
@@ -1740,7 +1756,7 @@ export const overlay: Overlay = (source, args, answer, writes) => {
         else if (w.source === 'deleteNote') notes = notes.filter((n) => n.id !== a[0]);
       }
       notes.sort((a, b) => (a.isPinned === b.isPinned ? b.updatedAt - a.updatedAt : a.isPinned ? -1 : 1));
-      const folders = [...new Set(notes.filter((n) => n.folder !== '' && n.deletedAt === 0).map((n) => n.folder))].sort();
+      const folders = withAncestors([...new Set([...notes.filter((n) => n.folder !== '' && n.deletedAt === 0).map((n) => n.folder), ...got.folders])]);
       const tags = [...new Set(notes.filter((n) => n.deletedAt === 0).flatMap((n) => n.tags))].sort();
       return { ...got, notes, folders, tags } as never;
     }

@@ -149,3 +149,10 @@ A zip keeps its directories as note folders; a single `.md` is folderless. First
 - [../components.md](../components.md) - UI components
 - [../../backend/database.md](../../backend/database.md) - Notes table
 - [../../backend/services/sync.md](../../backend/services/sync.md) - Sync protocol
+
+## Nested folders (app)
+- A folder is a path `A/B/C`. `lib.folders` (`withAncestors` in `app.ts`) carries every level, parents before children, so `A` exists when only `A/B` has notes.
+- The notes home draws one section per folder with a header button (`folder-toggle-<path>`): indent `folderDepth(f) * 16`, the leaf name (`lastSegment`), a chevron. A header shows when a note sits in it or below it (`underFolder`); tapping folds it and everything under it (`shutFolders`, paths joined by `|`; `folderShut`, `insideShut`). Unfiled has no fold.
+- The folder filter on a path includes its subfolders. Side-bar tree and the move-to-folder menu still list full paths.
+- **New folder:** `new-note-folder` (toolbar, beside Sort) and `side-new-note-folder` (sidebar) open the `new-folder` dialog: name (`new-folder-name`) and an optional parent (`new-folder-parent`, defaults to the active folder filter). `makeNoteFolder` → `POST /note-folders {name, parent}`; `loadNotes` also reads `GET /note-folders` and merges it into `folders` (an older server without the route is ignored).
+
