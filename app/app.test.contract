@@ -78,6 +78,7 @@ test "a note is written, opened, edited, filed, tagged, trashed and restored"
   tap "Grocery plan v2"
   clock data
   clock settle
+  tap "note-more"
   tap "note-trash"
   clock settle
   tap "trash-confirm"
@@ -96,6 +97,7 @@ test "a note is written, opened, edited, filed, tagged, trashed and restored"
   tap "Grocery plan v2"
   clock data
   clock settle
+  tap "note-more"
   tap "note-trash"
   clock settle
   tap "trash-confirm"
@@ -991,6 +993,7 @@ test "a shareable link opens the note publicly and is revoked"
   tap "Public recipe"
   clock data
   clock settle
+  tap "note-more"
   tap "note-share"
   clock settle
   tap "create-link"
@@ -1040,6 +1043,7 @@ test "a note shared with a person appears under their shared with me"
   tap "Team notes"
   clock data
   clock settle
+  tap "note-more"
   tap "note-share"
   clock settle
   type "share-email" "bob@example.com"
@@ -1070,6 +1074,7 @@ test "a note shared with a person appears under their shared with me"
   expect text "shared-body" == "Standup is at nine."
 
 test "notes sort by title"
+  size 1280x800
   type "email" "sort@example.com"
   type "password" "Passw0rd!23"
   tap "toggle-auth"
@@ -1077,21 +1082,19 @@ test "notes sort by title"
   tap "submit-auth"
   clock data
   clock settle
-  tap "notes-add"
-  tap "add-note"
+  tap "side-new-note"
   clock settle
   type "note-title" "Bananas"
   tap "note-save"
   clock data
   clock settle
-  tap "notes-add"
-  tap "add-note"
+  tap "side-new-note"
   clock settle
   type "note-title" "Apples"
   tap "note-save"
   clock data
   clock settle
-  tap "sort-button"
+  tap "side-sort"
   clock settle
   tap "sort-title"
   clock settle
@@ -2297,6 +2300,7 @@ test "a vault note hides its code, copies on tap and shows it from the eye"
   clock data
   clock settle
   expect tree missing "view-code-eye-0-1"
+  tap "note-more"
   tap "note-vault"
   clock data
   clock settle

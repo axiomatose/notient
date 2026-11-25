@@ -2195,7 +2195,7 @@ component App
       nav = back(nav)
 
   view
-    main viewport-fit="cover" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize dragenter=dropEntered dragleave=dropLeft drop=filesDropped testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
+    main viewport-fit="cover" orientationlock=(winW < 600 ? "portrait" : "any") navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize dragenter=dropEntered dragleave=dropLeft drop=filesDropped testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
       input id="export-save" display="none" outline="none"
       if dropOver and wide
@@ -2296,15 +2296,13 @@ component App
                         button press=openTrash aria-label="Trash" testId="open-trash"
                           image "symbol:delete"
                       else
-                        button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
-                          image "symbol:sort"
                         button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
                           image "symbol:sf/folder.badge.plus"
                         button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
                           image "symbol:share"
+                        button popovertarget="new-note-menu" aria-label="New" testId="notes-add"
+                          image "symbol:add"
                     if not wide
-                      button popovertarget="new-note-menu" aria-label="New" testId="notes-add" position="absolute" right=20 bottom=24 z-index=5 width=56 height=56 border-radius=28 display="flex" align-items="center" justify-content="center" background-color="AccentColor" color="#ffffff" box-shadow="0 4px 14px #00000050"
-                        image "symbol:add"
                       if folderFilter != ""
                         row gap=8 align-items="center" padding="4px 16px" testId="folder-chip"
                           text `Folder: ${folderFilter}` font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 line-clamp=1
@@ -2468,6 +2466,15 @@ component App
                                 text "Open"
                               button press=revokeLinkNow(l.id) destructive=true aria-label=`Revoke ${l.slug}` testId=`revoke-link-${l.id}`
                                 text "Revoke"
+                      section
+                        header
+                          text "This note"
+                        row
+                          button press=saveNoteAsTemplate testId="note-template"
+                            text "Save as Template"
+                        row
+                          button press=exportThisNote testId="note-export"
+                            text "Export Note…"
                       section
                         header
                           text "Share with a person"
@@ -2655,20 +2662,27 @@ component App
                     column id="list-menu-pop" popover="auto" role="menu" aria-label="List options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="list-menu-pop"
                       if sectionsSame
                         button press=openNewSection popovertarget="list-menu-pop" popovertargetaction="hide" testId="menu-add-section"
+                          image "symbol:sf/rectangle.badge.plus"
                           text "Add section"
                       if groceryOn
                         button press=toggleCompleted popovertarget="list-menu-pop" popovertargetaction="hide" testId="menu-show-completed"
+                          image (showCompleted ? "symbol:sf/eye.slash" : "symbol:sf/eye")
                           text (showCompleted ? "Hide completed" : "Show completed")
                       button press=toggleListView popovertarget="list-menu-pop" popovertargetaction="hide" testId="menu-view-toggle"
+                        image (listView == "list" ? "symbol:sf/rectangle.split.3x1" : "symbol:sf/list.bullet")
                         text (listView == "list" ? "Board view" : "List view")
                       if sectionsSame and sections.sections.length > 1
                         button press=openSectionOrder testId="menu-reorder-sections"
+                          image "symbol:sf/arrow.up.arrow.down"
                           text "Reorder sections"
                       button press=saveListAsTemplate popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-save-template"
+                        image "symbol:sf/rectangle.3.offgrid"
                         text "Save as template"
                       button press=openShareList(e.params.id) popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-share"
+                        image "symbol:sf/square.and.arrow.up"
                         text "Share"
                       button press=openEditList(e.params.id) popovertarget="list-menu-pop" popovertargetaction="hide" testId="list-edit"
+                        image "symbol:sf/pencil"
                         text "Edit"
                     column id="task-menu" popover="auto" role="menu" aria-label="Task options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="task-menu"
                       button press=openTaskDetail(ctxTask) popovertarget="task-menu" popovertargetaction="hide" testId="ctx-open"
@@ -2964,12 +2978,16 @@ component App
                     column id="cal-menu-pop" popover="auto" role="menu" aria-label="Calendar options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="cal-menu-pop"
                       for m in ["day", "week", "month"] key=m
                         button role="menuitemradio" aria-checked=(calMode == m) press=pickMode(m) popovertarget="cal-menu-pop" popovertargetaction="hide" testId=`cal-mode-${m}`
+                          image (m == "day" ? "symbol:sf/sun.max" : m == "week" ? "symbol:sf/calendar" : "symbol:sf/square.grid.3x3")
                           text (m == "day" ? "Day" : m == "week" ? "Week" : "Month")
                       button press=openNewCalendar testId="menu-new-calendar"
+                        image "symbol:sf/calendar.badge.plus"
                         text "New calendar"
                       button press=openManageCalendars popovertarget="cal-menu-pop" popovertargetaction="hide" testId="menu-manage-calendars"
+                        image "symbol:sf/slider.horizontal.3"
                         text "Manage calendars"
                       button press=thisPeriod popovertarget="cal-menu-pop" popovertargetaction="hide" testId="menu-today"
+                        image "symbol:sf/calendar"
                         text "Today"
                     column id="new-calendar-pop" popover="auto" padding=8 gap=4 width="17.5rem" testId="new-calendar-pop"
                       row gap=8 align-items="center"
@@ -3179,27 +3197,26 @@ component App
             text (listView == "board" ? (folded(shutCols, ctxSection) ? "Expand" : "Collapse") : (folded(foldedCols, ctxSection) ? "Expand" : "Collapse"))
         button press=ctxSectionAdd popovertarget="section-menu" popovertargetaction="hide" testId="ctx-section-add"
           text "Add Task"
-      column id="new-note-menu" popover="auto" role="menu" aria-label="New" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-width="20rem" max-height="24rem" overflow-y="auto" testId="new-note-menu"
+      column id="new-note-menu" popover="auto" role="menu" aria-label="New" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="new-note-menu"
         button role="menuitem" press=openNewNote popovertarget="new-note-menu" popovertargetaction="hide" testId="add-note"
-          text "New Note" font="-exact-headline"
-        if tplShown.length > 0
-          text "From a template" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+          image "symbol:compose"
+          text "New Note"
         for t in tplShown key=t.id
-          button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="new-note-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
-            text t.name font="-exact-headline" line-clamp=1
-            text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+          button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="new-note-menu" popovertargetaction="hide" testId=`tpl-${t.id}`
+            image "symbol:sf/rectangle.3.offgrid"
+            text t.name
       column id="tpl-menu" popover="auto" role="menu" aria-label="Templates" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-width="20rem" max-height="24rem" overflow-y="auto" testId="tpl-menu"
         if tplAll.length > 6
           input type="search" value=tplQuery input=setTplQuery placeholder="Search templates" appearance="none" aria-label="Search templates" testId="tpl-search" padding=8 outline="none"
         for t in tplShown key=t.id
           if nav.tab == "tasks"
-            button role="menuitem" press=newListFromTemplate(t.name, t.json) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
-              text t.name font="-exact-headline" line-clamp=1
-              text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+            button role="menuitem" press=newListFromTemplate(t.name, t.json) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}`
+              image "symbol:sf/rectangle.3.offgrid"
+              text t.name
           else
-            button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
-              text t.name font="-exact-headline" line-clamp=1
-              text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+            button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}`
+              image "symbol:sf/rectangle.3.offgrid"
+              text t.name
         if tplShown.length == 0
           text "No templates match" color="-exact-secondary-label" padding=8
       column id="empty-notes-menu" popover="auto" role="menu" aria-label="Notes" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="empty-notes-menu"
@@ -3289,7 +3306,7 @@ component App
               for u in lightboxList key=u
                 button appearance="none" press=lightboxGo(u) aria-label="Show this image" testId="lightbox-thumb" padding=0 flex-shrink=0 opacity=(u == lightboxUrl ? 1 : 0.5) border=(u == lightboxUrl ? "2px solid #ffffff" : "2px solid transparent") border-radius=6
                   image u width=64 height=48 object-fit="cover" border-radius=4
-        button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
+        button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top="calc(env(safe-area-inset-top) + 56px)" right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
           image "symbol:close"
       dialog id="search-sheet" aria-label="Search" padding=16 testId="search-sheet"
         column gap=10 min-width="18rem"
@@ -4530,30 +4547,29 @@ component NoteEditor
       header display=(chromeHidden ? "none" : "flex") align-items="center" gap=8 padding=(wide ? "8px 12px 0" : "8px 16px") position=(wide ? "absolute" : "relative") top=0 right=0 z-index=(wide ? 11 : 0) box-sizing="border-box" border-bottom="none"
         if not wide
           text (mode == "edit" ? "Edit Note" : "View Note") role="heading" aria-level=2 flex=1 font-size="min(-exact-title3, 31px)"
-        button press=toggleVault aria-label=(vault ? "Turn off vault" : "Make a vault note") testId="note-vault" color=(vault ? "AccentColor" : "-exact-label")
-          image "symbol:lock"
-        button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin"
-          image "symbol:pin"
         if wide
+          button press=toggleVault aria-label=(vault ? "Turn off vault" : "Make a vault note") testId="note-vault" color=(vault ? "AccentColor" : "-exact-label")
+            image "symbol:lock"
           button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
             LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
           button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
             LucideIcon(paths=["M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4 14h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M17 14h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"], color="-exact-label", size=18)
-        else
-          button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
-            image "symbol:download"
-          button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
-            image "symbol:sf/doc.badge.plus"
-        button press=share(noteId) aria-label="Share" testId="note-share"
-          image "symbol:share"
-        button press=trash aria-label="Move to Trash" testId="note-trash"
-          image "symbol:delete"
+        button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin" color=(pinned ? "AccentColor" : "-exact-label")
+          image "symbol:pin"
+        if wide
+          button press=share(noteId) aria-label="Share" testId="note-share"
+            image "symbol:share"
+          button press=trash aria-label="Move to Trash" testId="note-trash"
+            image "symbol:delete"
         if mode == "edit"
           button press=saveAndClose disabled=((title.trim() == "" and (noteId != "" or body.trim() == "")) or saving) aria-label="Save and close" testId="note-save"
             image "symbol:checkmark"
         else
           button press=startEdit aria-label="Edit" testId="note-edit"
             image "symbol:compose"
+        if not wide
+          button popovertarget="note-more-pop" aria-label="More" testId="note-more"
+            image "symbol:ellipsis"
       row display=(chromeHidden ? "none" : "flex") gap=8 align-items="center" padding="8px 16px" flex-wrap="wrap"
         if titleEditing
           input value=title input=editTitle placeholder="Title" aria-label="Title" autofocus=true appearance="none" outline="none"
@@ -4605,6 +4621,16 @@ component NoteEditor
           text imageError color="-exact-system-red" font="-exact-footnote" testId="note-image-error"
         text metaLine color="-exact-secondary-label" font="-exact-footnote" testId="note-info"
       input type="file" accept="image/*" multiple=true id="note-image" display="none" change=imagePicked testId="note-image-input" outline="none"
+    column id="note-more-pop" popover="auto" role="menu" aria-label="More" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="14rem" testId="note-more-pop"
+      button role="menuitem" press=share(noteId) popovertarget="note-more-pop" popovertargetaction="hide" testId="note-share"
+        image "symbol:share"
+        text "Share…" font="-exact-headline"
+      button role="menuitem" press=toggleVault popovertarget="note-more-pop" popovertargetaction="hide" testId="note-vault"
+        image "symbol:lock"
+        text (vault ? "Turn Off Vault" : "Make a Vault Note") font="-exact-headline"
+      button role="menuitem" press=trash destructive=true popovertarget="note-more-pop" popovertargetaction="hide" testId="note-trash"
+        image "symbol:delete"
+        text "Move to Trash" font="-exact-headline"
     column id="note-folder-pop" popover="auto" padding=8 gap=4 testId="note-folder-pop"
       row gap=8 align-items="center"
         text "Folder" font="-exact-footnote" color="-exact-secondary-label"
