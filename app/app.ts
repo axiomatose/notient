@@ -896,10 +896,10 @@ const sources: Sources = {
   // Search across the person's own notes, tasks and events (the server decides what matches).
   searchAll: async ([q], store): Promise<Result<'searchAll'>> => {
     const query = String(q).trim();
-    if (who(store) === '' || query === '') return { q: query, notes: [], tasks: [], events: [] };
+    if (who(store) === '' || query === '') return { q: query, notes: [], tasks: [], events: [], folders: [], lists: [] };
     const r = await callWith(store, `/search?q=${encodeURIComponent(query)}&limit=8`);
-    if (!r.ok) return { q: query, notes: [], tasks: [], events: [] };
-    const b = r.body as { notes?: { id: string; title: string; folder?: string; snippet?: string; vault?: boolean }[]; tasks?: { id: string; title: string; listId: string; listName: string; isDone?: boolean }[]; events?: { id: string; title: string; startTime: number; allDay?: boolean; location?: string | null }[] };
+    if (!r.ok) return { q: query, notes: [], tasks: [], events: [], folders: [], lists: [] };
+    const b = r.body as { notes?: { id: string; title: string; folder?: string; snippet?: string; vault?: boolean }[]; tasks?: { id: string; title: string; listId: string; listName: string; isDone?: boolean }[]; events?: { id: string; title: string; startTime: number; allDay?: boolean; location?: string | null }[]; folders?: string[]; lists?: { id: string; name: string }[] };
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const when = (ms: number, allDay: boolean) => {
       const d = new Date(ms);
@@ -910,6 +910,8 @@ const sources: Sources = {
       q: query,
       notes: (b.notes ?? []).map((n) => ({ id: n.id, title: n.title, sub: n.snippet && n.snippet !== '' ? n.snippet : n.vault ? 'Vault note' : (n.folder ?? '') })),
       tasks: (b.tasks ?? []).map((t) => ({ id: t.id, title: t.title, listId: t.listId, sub: t.listName, done: t.isDone === true })),
+      folders: (b.folders ?? []).map((f) => ({ id: f, title: f.split('/').at(-1) ?? f, sub: f.includes('/') ? f : '' })),
+      lists: (b.lists ?? []).map((l) => ({ id: l.id, title: l.name, sub: '' })),
       events: (b.events ?? []).map((e) => ({ id: e.id, title: e.title, sub: `${when(e.startTime, e.allDay === true)}${e.location ? ` · ${e.location}` : ''}` })),
     };
   },

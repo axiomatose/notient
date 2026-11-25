@@ -29,6 +29,13 @@ export function createSearchRepository(db, { notes }) {
     LIMIT @limit
   `);
 
+  const folderStmt = db.prepare("SELECT path FROM note_folders WHERE user_id = ?");
+  const listStmt = db.prepare(`
+    SELECT id, name FROM task_lists
+    WHERE user_id = @userId AND (deleted_at IS NULL OR deleted_at = 0) AND name LIKE @like ESCAPE '\\'
+    ORDER BY name COLLATE NOCASE LIMIT @limit
+  `);
+
   const snippet = (body, q) => {
     const text = String(body ?? "").replace(/\s+/g, " ");
     const at = text.toLowerCase().indexOf(q);
@@ -40,10 +47,12 @@ export function createSearchRepository(db, { notes }) {
   return {
     search({ userId, q, limit = 8 }) {
       const needle = String(q ?? "").trim().toLowerCase();
-      if (needle === "") return { notes: [], tasks: [], events: [] };
+      if (needle === "") return { notes: [], tasks: [], events: [], folders: [], lists: [] };
       const like = `%${escapeLike(needle)}%`;
       const found = [];
+      const paths = new Set(folderStmt.all(userId).map((r) => r.path));
       for (const n of notes.list({ userId, includeDeleted: false })) {
+        if (n.folder) paths.add(n.folder);
         const vault = Array.isArray(n.tags) && n.tags.includes("vault");
         const inTitle = String(n.title ?? "").toLowerCase().includes(needle);
         const inTags = (n.tags ?? []).some((t) => String(t).toLowerCase().includes(needle));
@@ -55,6 +64,8 @@ export function createSearchRepository(db, { notes }) {
       return {
         notes: found.slice(0, limit),
         tasks: taskStmt.all({ userId, like, limit }).map((t) => ({ ...t, isDone: t.isDone === 1 })),
+        folders: [...paths].filter((f) => f.toLowerCase().includes(needle)).sort((a, b) => a.localeCompare(b)).slice(0, limit),
+        lists: listStmt.all({ userId, like, limit }),
         events: eventStmt.all({ userId, like, now: Date.now(), limit }).map((e) => ({ ...e, allDay: e.allDay === 1 })),
       };
     },

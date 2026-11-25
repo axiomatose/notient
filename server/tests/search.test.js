@@ -41,6 +41,15 @@ describe("search", () => {
     expect(res.body.events.map((e) => e.title)).toEqual(["Tomato festival"]);
   });
 
+  it("finds folders (made on purpose or holding notes) and task lists by name", async () => {
+    await agent.post("/note-folders").set(me).send({ name: "Chores", parent: "Home" });
+    const home = await agent.get("/search").query({ q: "home" }).set(me);
+    expect(home.body.folders).toEqual(["Home", "Home/Chores"]);
+    const chores = await agent.get("/search").query({ q: "chores" }).set(me);
+    expect(chores.body.folders).toEqual(["Home/Chores"]);
+    expect(chores.body.lists.map((l) => l.name)).toEqual(["Chores"]);
+  });
+
   it("matches a vault note by its title only", async () => {
     const res = await agent.get("/search").query({ q: "wifi" }).set(me);
     expect(res.body.notes.map((n) => n.title)).toEqual(["Wifi"]);

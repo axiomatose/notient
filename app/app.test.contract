@@ -24,6 +24,7 @@ test "a note is written, opened, edited, filed, tagged, trashed and restored"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Grocery plan"
@@ -61,17 +62,7 @@ test "a note is written, opened, edited, filed, tagged, trashed and restored"
   expect state lib.notes.0 .tags.1 == "weekly"
   back
   clock settle
-  tap "tag-button"
-  clock settle
-  tap "tag-shopping"
-  clock settle
-  expect state tagFilter == "shopping"
-  tap "tag-button"
-  clock settle
-  tap "tag-all"
-  clock settle
-  expect state tagFilter == ""
-  tap "search-open"
+  tap "tab-search"
   clock settle
   type "search-sheet-input" "weekly"
   clock data
@@ -128,6 +119,7 @@ test "the editor's popovers suggest recent folders and popular tags"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "First note"
@@ -141,6 +133,7 @@ test "the editor's popovers suggest recent folders and popular tags"
   tap "note-save"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Second note"
@@ -987,6 +980,7 @@ test "a shareable link opens the note publicly and is revoked"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Public recipe"
@@ -1035,6 +1029,7 @@ test "a note shared with a person appears under their shared with me"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Team notes"
@@ -1082,12 +1077,14 @@ test "notes sort by title"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Bananas"
   tap "note-save"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Apples"
@@ -1110,6 +1107,7 @@ test "saved notes survive a lost connection"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Offline keeper"
@@ -1133,6 +1131,7 @@ test "a task in a note checks off from view mode and stays checked"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Checklist"
@@ -1174,6 +1173,7 @@ test "a code block renders with a copy button"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Snippet"
@@ -1201,6 +1201,7 @@ test "the toolbar bolds a selection in the new-note editor"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   expect tree has "fmt-bold"
@@ -1225,6 +1226,7 @@ test "a numbered list and a code block come back exactly as saved"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Fidelity"
@@ -1256,6 +1258,7 @@ test "a task saved in the old escaped form still checks off"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Legacy"
@@ -1853,7 +1856,7 @@ test "the phone templates dropdown starts a note and a list"
   tap "submit-auth"
   clock data
   clock settle
-  tap "templates-button-notes"
+  tap "notes-add"
   tap "tpl-builtin-meeting"
   clock settle
   expect state editorTitle == "Meeting notes"
@@ -1957,6 +1960,7 @@ test "links draw app-side and an image can be a link"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Links"
@@ -1979,6 +1983,7 @@ test "an image is moved and removed from the bar that shows on its line"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Pics"
@@ -2251,6 +2256,7 @@ test "inline code, alone on a line or among text, is a tap-to-copy chip"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Ticks"
@@ -2279,6 +2285,7 @@ test "a vault note hides its code, copies on tap and shows it from the eye"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Keys"
@@ -2315,6 +2322,7 @@ test "the code button on a bare caret puts a selected placeholder between ticks"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   tap "fmt-code"
@@ -2481,6 +2489,7 @@ test "a nested folder shows under its parent and folds with it"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Deep note"
@@ -2515,6 +2524,7 @@ test "a folder is made from the notes home, inside a parent, before any note is 
   clock data
   clock settle
   expect state lib.folders.0 == "Dev"
+  expect tree has "folder-Dev"
   tap "new-note-folder"
   clock settle
   type "new-folder-name" "Auth"
@@ -2653,6 +2663,7 @@ test "tapping an image in a note opens it full size"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Pics"
@@ -2826,6 +2837,7 @@ test "images inserted back to back are laid out in one scrolling row"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Trip"
@@ -2858,6 +2870,7 @@ test "the format bar has H1 to H4, a divider and a link for an image line"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   expect tree has "fmt-h1"
@@ -3076,6 +3089,7 @@ test "a note's right-click menu pins it"
   tap "submit-auth"
   clock data
   clock settle
+  tap "notes-add"
   tap "add-note"
   clock settle
   type "note-title" "Pin me"

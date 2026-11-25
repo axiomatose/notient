@@ -28,6 +28,7 @@ routes nav
     eventDetail "/event/:id"
     manageCalendars "/manage-calendars"
     addCalendar "/add-calendar"
+  tab search "/search"
 
 shape Time
   epochAtZero: number
@@ -210,11 +211,18 @@ shape FoundEvent
   title: string
   sub: string
 
+shape FoundPlace
+  id: string
+  title: string
+  sub: string
+
 shape Found
   q: string
   notes: FoundNote[]
   tasks: FoundTask[]
   events: FoundEvent[]
+  folders: FoundPlace[]
+  lists: FoundPlace[]
 
 shape Templates
   owner: string
@@ -876,8 +884,8 @@ component App
   derive selectedTask = drawerTask != "" ? drawerTask : match stack(nav).filter(e => e.name == "taskDetail").at(-1) { case some(e) => e.params.id, case none => "" }
   derive sectionsSame = sections.owner == session.email and session.email != ""
   derive boardIds = ["none"].concat(sections.sections.map(s => s.id))
-  // Room beside the 21rem sidebar: an open column needs 10.5rem (168px) and a gap, a sliver 40px and a gap.
-  derive boardFit = max(1, min(boardIds.length, floor((winW - 336 - 24 + 12 - 52 * boardIds.length) / 128)))
+  // Room beside the 23rem sidebar: an open column needs 10.5rem (168px) and a gap, a sliver 40px and a gap.
+  derive boardFit = max(1, min(boardIds.length, floor((winW - 368 - 24 + 12 - 52 * boardIds.length) / 128)))
   derive boardAutoShut = boardIds.slice(boardFit)
   // Icon names the views draw that the bundle lacks: fetched once each (the probe is the name being picked).
   derive iconNames = lists.lists.map(l => l.icon).concat(sections.sections.map(s => s.icon)).concat([iconProbe, avatarIcon]).filter(n => n != "" and not isBundled(n))
@@ -1369,23 +1377,34 @@ component App
     searchQ = v
   action clearSearch
     searchQ = ""
+  action openFoundNote(id: string)
+    searchQ = ""
+    close("search-sheet")
+    openSideNote(id)
+  action openFoundTask(listId: string, id: string)
+    searchQ = ""
+    close("search-sheet")
+    openRecentTask(listId, id)
+  action openFoundFolder(path: string)
+    close("search-sheet")
+    searchQ = ""
+    folderFilter = path
+    nav = select(nav, "notes")
+  action openFoundList(id: string)
+    close("search-sheet")
+    searchQ = ""
+    openSideList(id)
   action openSearchSheet
     searchQ = ""
     showModal("search-sheet")
-  action openFoundNote(id: string)
-    close("search-sheet")
-    searchQ = ""
-    openSideNote(id)
-  action openFoundTask(listId: string, id: string)
-    close("search-sheet")
-    searchQ = ""
-    openRecentTask(listId, id)
   action openFoundEvent(id: string)
-    close("search-sheet")
     searchQ = ""
+    close("search-sheet")
     nav = push(nav, path("eventDetail", id))
   action setTagFilter(t: string)
     tagFilter = t
+  action clearFolderFilter
+    folderFilter = ""
   action setFolderFilter(f: string)
     folderFilter = f
   // A folder header folds or unfolds its notes and subfolders.
@@ -2178,7 +2197,7 @@ component App
   view
     main viewport-fit="cover" navigationKey=`${top(nav).id}` navigationBack="back" navigate=follow resize=onWinResize dragenter=dropEntered dragleave=dropLeft drop=filesDropped testId="app" width="100%" height="100%" interactive-widget="resizes-content" position="relative"
       display="flex" flex-direction=(wide and session.signedIn ? "row" : "column")
-      input id="export-save" display="none"
+      input id="export-save" display="none" outline="none"
       if dropOver and wide
         column position="absolute" inset=12 z-index=60 align-items="center" justify-content="center" gap=6 border="3px dashed AccentColor" border-radius=18 background-color="light-dark(#ffffffd9, #000000d9)" pointer-events="none" testId="drop-overlay"
           text "Drop to import" font="-exact-title2" font-weight=600
@@ -2186,7 +2205,7 @@ component App
       if wide and session.signedIn
         // The title bar: our own row under the window controls (display_override window-controls-overlay, wide routes say navigationBar="none").
         row position="absolute" top=0 left=0 right=0 height=44 z-index=10 align-items="center" box-sizing="border-box" border-bottom="1px solid light-dark(#e5e5ea, #2c2c2e)" pointer-events="none" testId="titlebar"
-          row width=(sideOpen ? "21rem" : "auto") height=44 flex-shrink=0 align-items="center" gap=6 box-sizing="border-box" padding-top=8 padding-left="calc(env(titlebar-area-x, 0px) + 8px)" padding-right=12 background-color=(sideOpen ? "light-dark(#eef1f6, #1a1c21)" : "transparent") testId="titlebar-left"
+          row width=(sideOpen ? "23rem" : "auto") height=44 flex-shrink=0 align-items="center" gap=6 box-sizing="border-box" padding-top=8 padding-left="calc(env(titlebar-area-x, 0px) + 8px)" padding-right=12 background-color=(sideOpen ? "light-dark(#eef1f6, #1a1c21)" : "transparent") testId="titlebar-left"
             button press=toggleSidebar appearance="none" pointer-events="auto" aria-label="Toggle the sidebar" testId="sidebar-toggle" width=28 height=28 display="flex" align-items="center" justify-content="center"
               LucideIcon(paths=["M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z", "M9 3v18"], color="-exact-secondary-label", size=18)
             text "Notient" font="-exact-headline"
@@ -2215,11 +2234,11 @@ component App
                 button press=crumbMode appearance="none" pointer-events="auto" testId="crumb-mode"
                   text (editorMode == "edit" ? "Edit" : "View") font="-exact-subheadline" color="AccentColor"
           // Centered over the page below the sidebar, under the page's own header buttons on the right.
-          row position="absolute" top=0 left=(sideOpen ? "calc(21rem + (100% - 21rem) / 2)" : "50%") transform="translateX(-50%)" width="min(18rem, 30%)" height=44 align-items="center" padding-top=8 box-sizing="border-box" z-index=9
-            input type="search" value=searchQ input=runSearch placeholder="Search everything" aria-label="Search everything" testId="search-all" pointer-events="auto" appearance="none" width="100%" box-sizing="border-box" padding="5px 10px" border="1px solid light-dark(#d1d1d6, #3a3a3c)" border-radius=8 background-color="light-dark(#f2f2f7, #2c2c2e)"
+          row position="absolute" top=0 left=(sideOpen ? "calc(23rem + (100% - 23rem) / 2)" : "50%") transform="translateX(-50%)" width="min(18rem, 30%)" height=44 align-items="center" padding-top=8 box-sizing="border-box" z-index=9
+            input type="search" value=searchQ input=runSearch placeholder="Search everything" aria-label="Search everything" testId="search-all" pointer-events="auto" appearance="none" width="100%" box-sizing="border-box" padding="5px 10px" border="1px solid light-dark(#d1d1d6, #3a3a3c)" border-radius=8 background-color="light-dark(#f2f2f7, #2c2c2e)" outline="none"
             if searchQ.trim() != ""
               column position="absolute" top=44 left=0 width="26rem" max-width="90vw" max-height="70vh" overflow-y="auto" pointer-events="auto" z-index=30 box-sizing="border-box" padding=8 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" testId="search-pop"
-                SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent)
+                SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent, openFolder=openFoundFolder, openList=openFoundList)
         if sideOpen
           DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query="", tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=runSearch, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
       column flex=1 min-width=0 min-height=0 position="relative" margin-top=0
@@ -2265,34 +2284,48 @@ component App
                           image "symbol:person"
                         if nav.tab == "notes"
                           NotifBell(count=unreadCount)
-                        button press=openSearchSheet aria-label="Search" testId="search-open"
-                          image "symbol:search"
                       if not wide
                         text "Notes" role="heading" aria-level=1 flex=1 min-width=0
-                      button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-notes"
-                        image "symbol:document"
-                      button press=openNewNote aria-label="New Note" testId="add-note"
-                        image "symbol:compose"
                       if wide
+                        button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-notes"
+                          image "symbol:document"
+                        button press=openNewNote aria-label="New Note" testId="add-note"
+                          image "symbol:compose"
                         button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes-wide"
                           LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
-                      button press=openTrash aria-label="Trash" testId="open-trash"
-                        image "symbol:delete"
-                    row gap=8 align-items="center" flex-wrap="wrap" padding="8px 16px" testId="notes-toolbar"
-                      button popovertarget="tag-menu" testId="tag-button" aria-label="Tag filter"
-                        image "symbol:hashtag"
-                      button popovertarget="folder-menu" testId="folder-button" aria-label="Folder filter"
-                        image "symbol:filter"
-                      button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
-                        image "symbol:sort"
-                      button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
-                        LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=18)
-                      button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
-                        LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
+                        button press=openTrash aria-label="Trash" testId="open-trash"
+                          image "symbol:delete"
+                      else
+                        button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
+                          image "symbol:sort"
+                        button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
+                          image "symbol:sf/folder.badge.plus"
+                        button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
+                          image "symbol:share"
+                    if not wide
+                      button popovertarget="new-note-menu" aria-label="New" testId="notes-add" position="absolute" right=20 bottom=24 z-index=5 width=56 height=56 border-radius=28 display="flex" align-items="center" justify-content="center" background-color="AccentColor" color="#ffffff" box-shadow="0 4px 14px #00000050"
+                        image "symbol:add"
                       if folderFilter != ""
-                        text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
-                      if tagFilter != ""
-                        text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
+                        row gap=8 align-items="center" padding="4px 16px" testId="folder-chip"
+                          text `Folder: ${folderFilter}` font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 line-clamp=1
+                          button press=clearFolderFilter aria-label="Show all folders" testId="folder-chip-clear"
+                            image "symbol:close"
+                    if wide
+                      row gap=8 align-items="center" flex-wrap="wrap" padding="8px 16px" testId="notes-toolbar"
+                        button popovertarget="tag-menu" testId="tag-button" aria-label="Tag filter"
+                          image "symbol:hashtag"
+                        button popovertarget="folder-menu" testId="folder-button" aria-label="Folder filter"
+                          image "symbol:filter"
+                        button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
+                          image "symbol:sort"
+                        button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
+                          LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=18)
+                        button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
+                          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
+                        if folderFilter != ""
+                          text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
+                        if tagFilter != ""
+                          text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
                     if not sameOwner
                       if pending(lib)
                         column flex=1 justify-content="center" align-items="center"
@@ -2301,10 +2334,15 @@ component App
                         EmptyState(symbol="symbol:alert", title="Can’t Load Notes", message=(notesError != "" ? notesError : "Couldn’t load your notes. Try again."))
                           button press=pullNotes testId="notes-retry"
                             text "Try Again"
-                    else if notesShown.length == 0 and (not sharedSame or shared.notes.length == 0)
+                    else if notesShown.length == 0 and (tagFilter != "" or lib.folders.length == 0) and (not sharedSame or shared.notes.length == 0)
                       EmptyState(symbol="symbol:document", title="No Notes", message="Everything you write shows up here.")
                         button press=openNewNote testId="empty-add-note"
                           text "Write a Note"
+                      if not wide
+                        button press=openTrash testId="open-trash"
+                          row gap=10 align-items="center"
+                            image "symbol:delete"
+                            text "Trash"
                     else
                       list id=`content-${e.id}` appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
                         if notesError != ""
@@ -2318,7 +2356,7 @@ component App
                             row
                               text "Offline — showing your saved notes." color="-exact-secondary-label" testId="stale-note"
                         for f in sectionFolders key=f
-                          if sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, "", tagFilter)).length > 0 and not insideShut(shutFolders, f)
+                          if (sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, "", tagFilter)).length > 0 or (f != "" and tagFilter == "")) and not insideShut(shutFolders, f)
                             section
                               header
                                 button press=toggleFolderOpen(f) disabled=(f == "") appearance="none" padding-left=(folderDepth(f) * 16) aria-label=(f == "" ? "Unfiled" : folderShut(shutFolders, f) ? `Expand ${f}` : `Collapse ${f}`) testId=`folder-toggle-${f}`
@@ -2345,6 +2383,13 @@ component App
                                   text sn.title font-weight=600
                                   text `Shared by ${sn.sharedBy}` font="-exact-subheadline" color="-exact-secondary-label" line-clamp=1
                                 image "symbol:forward-chevron"
+                        if not wide
+                          section
+                            button press=openTrash testId="open-trash"
+                              row gap=10 align-items="center" flex=1
+                                image "symbol:delete"
+                                text "Trash" flex=1
+                              image "symbol:forward-chevron"
               if e.name == "note"
                 if sameOwner
                   for n in lib.notes.filter(x => x.id == e.params.id) key=`${n.id}-${n.version}`
@@ -2427,7 +2472,7 @@ component App
                         header
                           text "Share with a person"
                         row
-                          input value=shareEmail input=editShareEmail placeholder="their email" aria-label="Email" appearance="none"
+                          input value=shareEmail input=editShareEmail placeholder="their email" aria-label="Email" appearance="none" outline="none"
                             inputmode="email" enterkeyhint="next" testId="share-email" flex=1 min-width=0
                         row gap=8 align-items="center"
                           text "Permission"
@@ -2534,8 +2579,6 @@ component App
                           image "symbol:person"
                         if nav.tab == "tasks"
                           NotifBell(count=unreadCount)
-                        button press=openSearchSheet aria-label="Search" testId="search-open-tasks"
-                          image "symbol:search"
                       if not wide
                         text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
                       button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-tasks"
@@ -2582,7 +2625,7 @@ component App
                     column id="new-folder-pop" popover="auto" padding=8 gap=4 width="17.5rem" testId="new-folder-pop"
                       row gap=8 align-items="center"
                         column flex=1 min-width=0 gap=4
-                          input value=folderDraft input=editFolderDraft submit=addFolder placeholder="New folder for lists" appearance="none"
+                          input value=folderDraft input=editFolderDraft submit=addFolder placeholder="New folder for lists" appearance="none" outline="none"
                             aria-label="New folder" autofocus=true testId="folder-draft"
                           if folderError != "" and not pending(folderAdded)
                             text folderError font="-exact-footnote" color="-exact-system-red" testId="folder-error"
@@ -2606,7 +2649,7 @@ component App
                           image "symbol:sparkles"
                       button popovertarget="list-menu-pop" aria-label="List options" testId="list-menu"
                         image "symbol:ellipsis"
-                    input hatch="ai" data-request=aiRequest value=aiValue input=aiInput aria-hidden=true testId="ai-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none"
+                    input hatch="ai" data-request=aiRequest value=aiValue input=aiInput aria-hidden=true testId="ai-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none" outline="none"
                     if aiNotice != ""
                       text aiNotice color="-exact-system-red" font="-exact-footnote" padding="0 16px" testId="ai-notice"
                     column id="list-menu-pop" popover="auto" role="menu" aria-label="List options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="list-menu-pop"
@@ -2694,7 +2737,7 @@ component App
                         text "Delete" color="-exact-system-red"
                     column id="section-style-pop" popover="auto" padding=8 gap=6 width="19rem" box-sizing="border-box" testId="section-style-pop"
                       text boardName(sections.sections, noneName, styleSectionId) font="-exact-headline" role="heading" aria-level=3
-                      input value=styleNameDraft input=editStyleName submit=submitStyleName placeholder="Section name" aria-label="Section name" appearance="none" testId="section-style-name" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="8px 10px"
+                      input value=styleNameDraft input=editStyleName submit=submitStyleName placeholder="Section name" aria-label="Section name" appearance="none" testId="section-style-name" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="8px 10px" outline="none"
                       IconColorPicker(icon=styleSection.icon, color=styleSection.color, paths=iconPathsOf(styleSection.icon, fetchedIcons), query=iconQuery, hits=iconHits.names, queryEdit=editIconQuery, onIcon=pickSectionIcon, onColor=pickSectionColor, onNone=clearSectionStyle)
                     if reorderingSections
                       column flex=1 min-height=0 display="flex" flex-direction="column" gap=8 padding="8px 16px" box-sizing="border-box" testId="section-reorder"
@@ -2745,7 +2788,7 @@ component App
                                     view flex=1 min-height=28
                                   text `${colTasks(tasks.tasks, col, doneSectionId, "").length}` testId=`board-count-${col}` color="-exact-secondary-label" font="-exact-footnote"
                                 if doneSectionId != "" and col == doneSectionId
-                                  input type="search" value=doneQuery input=editDoneQuery placeholder="Search done" aria-label="Search done tasks" testId="done-search" flex-shrink=0 width="100%" box-sizing="border-box" appearance="none"
+                                  input type="search" value=doneQuery input=editDoneQuery placeholder="Search done" aria-label="Search done tasks" testId="done-search" flex-shrink=0 width="100%" box-sizing="border-box" appearance="none" outline="none"
                                 list id=`board-list-${col}` reorderGroup="board" reorderdrop=dropTask appearance="none" virtualized=true flex=1 min-height=0 width="100%"
                                   for tk in colTasks(tasks.tasks, col, doneSectionId, doneQuery) key=tk.id
                                     column padding-bottom=6 width="100%" box-sizing="border-box"
@@ -2759,7 +2802,7 @@ component App
                                           LucideIcon(paths=gripPaths(), color="", size=18)
                                 if sectionAdding == col
                                   column gap=4 flex-shrink=0
-                                    input value=sectionTaskDraft input=editSectionTaskDraft submit=addSectionTask blur=cancelSectionAdd placeholder="New task" appearance="none"
+                                    input value=sectionTaskDraft input=editSectionTaskDraft submit=addSectionTask blur=cancelSectionAdd placeholder="New task" appearance="none" outline="none"
                                       aria-label="New task" autofocus=true testId="section-add-input"
                                     if sectionTaskError != "" and not pending(sectionTaskAdded)
                                       text sectionTaskError font="-exact-footnote" color="-exact-system-red" testId="section-task-error"
@@ -2793,19 +2836,19 @@ component App
                                       for tk in boardTasks(tasks.tasks, col) key=tk.id
                                         column height=rowHeight(tk) box-sizing="border-box" width="100%" overflow="hidden"
                                           row reorderFor=`tasklist-${col}` gap=6 align-items="center" padding="4px 10px" height="100%" box-sizing="border-box" width="100%" aria-label=`Hold and drag ${tk.title} to reorder` testId=`list-grip-${tk.id}` contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
-                                            input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}`
+                                            input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}` outline="none"
                                             view testId=`task-title-${tk.id}` flex=1 min-width=0
                                               TaskLabel(tk=tk, todayMs=todayMs, today=today, offset=time.utcOffset, members=memberList)
                                             button appearance="none" press=openTaskDetail(tk.id) aria-label=`Open ${tk.title}` testId=`task-open-${tk.id}` min-width=44 min-height=44 flex-shrink=0 display="flex" align-items="center" justify-content="center"
                                               image "symbol:info"
                                     for tk in doneTasks(tasks.tasks, col).filter(x => not groceryOn or showCompleted) key=tk.id
                                       row gap=8 align-items="center" padding="0 4px" contextPopover="task-menu" contextmenu=openTaskMenu(tk.id)
-                                        input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}`
+                                        input type="checkbox" checked=tk.isDone change=toggleTask(tk.id) aria-label=`Check off ${tk.title}` testId=`task-${tk.id}` outline="none"
                                         button press=openTaskDetail(tk.id) testId=`task-title-${tk.id}` flex=1 min-width=0 text-align="start"
                                           text tk.title color="-exact-secondary-label"
                                     if sectionAdding == col
                                       column gap=4
-                                        input value=sectionTaskDraft input=editSectionTaskDraft submit=addSectionTask blur=cancelSectionAdd placeholder="New task" appearance="none"
+                                        input value=sectionTaskDraft input=editSectionTaskDraft submit=addSectionTask blur=cancelSectionAdd placeholder="New task" appearance="none" outline="none"
                                           aria-label="New task" autofocus=true testId="section-add-input"
                                         if sectionTaskError != "" and not pending(sectionTaskAdded)
                                           text sectionTaskError font="-exact-footnote" color="-exact-system-red" testId="section-task-error"
@@ -2813,7 +2856,7 @@ component App
                                       button press=openSectionAdd(col) aria-label="Add task" testId=`section-add-${col}` appearance="none" min-height=44 width="100%"
                     for g in (listQuickOpen ? [listQuickGen] : []) key=`q${g}`
                       row position="absolute" left=16 right=84 bottom=20 gap=8 align-items="center" padding=8 border-radius=12 background-color="light-dark(#f2f2f7, #2c2c2e)"
-                        input value=listQuickDraft input=editListQuickTitle submit=addListQuickTask blur=cancelListQuick placeholder="New task" appearance="none"
+                        input value=listQuickDraft input=editListQuickTitle submit=addListQuickTask blur=cancelListQuick placeholder="New task" appearance="none" outline="none"
                           aria-label="New task" autofocus=true testId="list-quick-title" flex=1 min-width=0
                         if listQuickError != "" and not pending(listQuickAdded)
                           text listQuickError font="-exact-footnote" color="-exact-system-red" testId="list-quick-error"
@@ -2877,7 +2920,7 @@ component App
                         header
                           text "Share with a person"
                         row
-                          input value=shareEmail input=editShareEmail placeholder="their email" aria-label="Email" appearance="none"
+                          input value=shareEmail input=editShareEmail placeholder="their email" aria-label="Email" appearance="none" outline="none"
                             inputmode="email" enterkeyhint="next" testId="share-list-email" flex=1 min-width=0
                         row gap=8 align-items="center"
                           text "Permission"
@@ -2909,8 +2952,6 @@ component App
                           image "symbol:person"
                         if nav.tab == "calendar"
                           NotifBell(count=unreadCount)
-                        button press=openSearchSheet aria-label="Search" testId="search-open-calendar"
-                          image "symbol:search"
                       text view.periodLabel role="heading" aria-level=1 testId="period-label" flex=1 min-width=0 font-size="min(-exact-title2, 22px)"
                       button press=prevPeriod aria-label="Previous" testId="prev-period"
                         image "symbol:icon.chevron-left"
@@ -2933,7 +2974,7 @@ component App
                     column id="new-calendar-pop" popover="auto" padding=8 gap=4 width="17.5rem" testId="new-calendar-pop"
                       row gap=8 align-items="center"
                         column flex=1 min-width=0 gap=4
-                          input value=calDraft input=editCalDraft submit=createCalendarNow placeholder="New calendar" appearance="none"
+                          input value=calDraft input=editCalDraft submit=createCalendarNow placeholder="New calendar" appearance="none" outline="none"
                             aria-label="New calendar" autofocus=true testId="cal-draft"
                           if calendarError != "" and not pending(calendarCreated)
                             text calendarError font="-exact-footnote" color="-exact-system-red" testId="cal-error"
@@ -3045,7 +3086,7 @@ component App
                 column navigationKey=`${e.id}` navigationPresentation="modal" navigationScroll="new-task" position="absolute" inset=0 width="100%" min-width="min(34rem, 100%)" display="flex" flex-direction="column"
                   TaskEditor(route=e.id, task=blankTask, creating=true, listId=newTaskListId, lists=lists.lists, sections=sections.sections, members=[], assign=assignTaskNow, saveClose=createNewTask, wide=wide, drawer=false, zoom=openLightbox, subs=[], images=[], save=createNewTask, trash=askDeleteTask, cancel=back, addSubtask=addSubtask, toggleSubtask=toggleSubtask, renameSubtask=renameSubtask, removeSubtask=deleteSubtask, addImage=addTaskImage, error=newTaskError, saving=(pending(newTaskAdded)), offset=time.utcOffset, today=today, noteRows=[], me=session.email, todayMs=todayMs, fetched=fetchedIcons, postNote=postTaskNote, dropNote=dropTaskNote)
       if wide and session.signedIn and sheet != ""
-        column position="absolute" top=0 bottom=0 left="21rem" right=0 testId="sheet-layer"
+        column position="absolute" top=0 bottom=0 left="23rem" right=0 testId="sheet-layer"
           button appearance="none" press=closeSheet aria-label="Close" testId="sheet-scrim" position="absolute" inset=0 width="100%" height="100%" background-color="#00000040"
           column position="absolute" left=0 right=0 bottom=0 margin="0 auto" width="min(40rem, calc(100% - 2rem))" height="min(86%, 46rem)" display="flex" flex-direction="column" background-color="light-dark(#ffffff, #2c2c2e)" border="1px solid light-dark(#0000001f, #ffffff2e)" border-radius="14px 14px 0 0" box-shadow="0 -6px 24px #0000003d" overflow="hidden" testId="sheet"
             button appearance="none" press=closeSheet aria-label="Close" testId="sheet-grabber" width="100%" height=18 flex-shrink=0 display="flex" align-items="center" justify-content="center"
@@ -3083,6 +3124,10 @@ component App
           testId="tab-calendar" flex=1
           image "symbol:calendar"
           text "Calendar" font-size="min(-exact-subheadline, 31px)"
+        button role="tab" aria-controls="panel-search" aria-selected=false press=openSearchSheet
+          testId="tab-search" flex=1
+          image "symbol:search"
+          text "Search" font-size="min(-exact-subheadline, 31px)"
       column id="tag-menu" popover="auto" role="menu" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="tag-menu"
         button role="menuitem" press=setTagFilter("") popovertarget="tag-menu" popovertargetaction="hide" testId="tag-all"
           text "All tags"
@@ -3134,9 +3179,18 @@ component App
             text (listView == "board" ? (folded(shutCols, ctxSection) ? "Expand" : "Collapse") : (folded(foldedCols, ctxSection) ? "Expand" : "Collapse"))
         button press=ctxSectionAdd popovertarget="section-menu" popovertargetaction="hide" testId="ctx-section-add"
           text "Add Task"
+      column id="new-note-menu" popover="auto" role="menu" aria-label="New" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-width="20rem" max-height="24rem" overflow-y="auto" testId="new-note-menu"
+        button role="menuitem" press=openNewNote popovertarget="new-note-menu" popovertargetaction="hide" testId="add-note"
+          text "New Note" font="-exact-headline"
+        if tplShown.length > 0
+          text "From a template" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for t in tplShown key=t.id
+          button role="menuitem" press=openNoteFromTemplate(t.title, t.body) popovertarget="new-note-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
+            text t.name font="-exact-headline" line-clamp=1
+            text t.blurb font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
       column id="tpl-menu" popover="auto" role="menu" aria-label="Templates" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" max-width="20rem" max-height="24rem" overflow-y="auto" testId="tpl-menu"
         if tplAll.length > 6
-          input type="search" value=tplQuery input=setTplQuery placeholder="Search templates" appearance="none" aria-label="Search templates" testId="tpl-search" padding=8
+          input type="search" value=tplQuery input=setTplQuery placeholder="Search templates" appearance="none" aria-label="Search templates" testId="tpl-search" padding=8 outline="none"
         for t in tplShown key=t.id
           if nav.tab == "tasks"
             button role="menuitem" press=newListFromTemplate(t.name, t.json) popovertarget="tpl-menu" popovertargetaction="hide" testId=`tpl-${t.id}` display="flex" flex-direction="column" align-items="flex-start" text-align="start"
@@ -3240,16 +3294,16 @@ component App
       dialog id="search-sheet" aria-label="Search" padding=16 testId="search-sheet"
         column gap=10 min-width="18rem"
           row gap=8 align-items="center"
-            input type="search" value=searchQ input=runSearch placeholder="Search notes, tasks, events" aria-label="Search everything" testId="search-sheet-input" flex=1 min-width=0 appearance="none" autofocus=true
+            input type="search" value=searchQ input=runSearch placeholder="Search notes, tasks, events" aria-label="Search everything" testId="search-sheet-input" flex=1 min-width=0 appearance="none" outline="none" autofocus=true
             button press=clearSearch commandfor="search-sheet" command="close" testId="search-sheet-close" aria-label="Close search"
               image "symbol:close"
           if searchQ.trim() != ""
             column max-height="60vh" overflow-y="auto" testId="search-sheet-results"
-              SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent)
+              SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent, openFolder=openFoundFolder, openList=openFoundList)
       dialog id="new-folder" aria-label="New folder" padding=20 testId="new-folder"
         column gap=12 min-width="18rem"
           text "New folder" font="-exact-headline"
-          input value=newFolderName input=editNewFolderName placeholder="Folder name" aria-label="Folder name" testId="new-folder-name" appearance="none"
+          input value=newFolderName input=editNewFolderName placeholder="Folder name" aria-label="Folder name" testId="new-folder-name" appearance="none" outline="none"
           row gap=8 align-items="center"
             text "Inside"
             select value=newFolderParent change=pickNewFolderParent aria-label="Parent folder" testId="new-folder-parent" flex=1 min-width=0
@@ -3266,7 +3320,7 @@ component App
           text (exportKind == "folder" ? `Export “${lastSegment(folderFilter)}”` : "Export all notes") font="-exact-headline"
           text "Notes are saved as Markdown files in folders, in a zip." color="-exact-secondary-label" font="-exact-footnote"
           row gap=8 align-items="center"
-            input type="checkbox" checked=exportVaults change=setExportVaults aria-label="Include vault notes" testId="export-vaults"
+            input type="checkbox" checked=exportVaults change=setExportVaults aria-label="Include vault notes" testId="export-vaults" outline="none"
             text "Include vault notes (named vault-…)"
           row gap=8 justify-content="flex-end"
             button commandfor="export-options" command="close" testId="export-cancel"
@@ -3373,7 +3427,7 @@ component EditListSheet
     list id="edit-list" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 width="100%"
       section
         row
-          input value=name input=editName placeholder="Name" aria-label="Name" testId="edit-list-name" flex=1 min-width=0 appearance="none"
+          input value=name input=editName placeholder="Name" aria-label="Name" testId="edit-list-name" flex=1 min-width=0 appearance="none" outline="none"
         row gap=8 align-items="center"
           text "Folder"
           select value=folderSel change=pickFolderSel aria-label="Folder" testId="edit-list-folder" flex=1 min-width=0
@@ -3385,7 +3439,7 @@ component EditListSheet
           column flex=1 min-width=0 gap=2
             text "Grocery list"
             text "Checked items disappear. Show them again from the list menu." font="-exact-footnote" color="-exact-secondary-label"
-          input type="checkbox" checked=grocery change=setGrocery aria-label="Grocery list" testId="edit-list-grocery"
+          input type="checkbox" checked=grocery change=setGrocery aria-label="Grocery list" testId="edit-list-grocery" outline="none"
       section
         IconColorPicker(icon=icon, color=color, paths=iconPathsOf(icon, fetched), query=query, hits=hits, queryEdit=queryEdit, onIcon=pickIcon, onColor=pickColor, onNone=clearStyle)
       if error != "" and not saving
@@ -3439,7 +3493,7 @@ component NewSectionSheet
     list id="new-section" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0 width="100%"
       section
         row
-          input value=name input=editName submit=save(name, icon, color) placeholder="Section name" aria-label="Section name" autofocus=true testId="section-draft" flex=1 min-width=0 appearance="none"
+          input value=name input=editName submit=save(name, icon, color) placeholder="Section name" aria-label="Section name" autofocus=true testId="section-draft" flex=1 min-width=0 appearance="none" outline="none"
       section
         IconColorPicker(icon=icon, color=color, paths=iconPathsOf(icon, fetched), query=query, hits=hits, queryEdit=queryEdit, onIcon=pickIcon, onColor=pickColor, onNone=clearStyle)
       if error != "" and not saving
@@ -3561,10 +3615,10 @@ component Settings
           text "Use initials"
         if photoError != "" and not photoSaving
           text photoError color="-exact-system-red" font="-exact-footnote" testId="avatar-error"
-        input type="file" accept="image/*" id="settings-avatar" display="none" change=photoPicked testId="settings-avatar-input"
+        input type="file" accept="image/*" id="settings-avatar" display="none" change=photoPicked testId="settings-avatar-input" outline="none"
       section
         row gap=8 align-items="center"
-          input value=nameDraft input=editName placeholder="Display name" aria-label="Display name" enterkeyhint="done" testId="settings-name" flex=1 min-width=0 appearance="none"
+          input value=nameDraft input=editName placeholder="Display name" aria-label="Display name" enterkeyhint="done" testId="settings-name" flex=1 min-width=0 appearance="none" outline="none"
         if nameError != "" and not nameSaving
           text nameError color="-exact-system-red" font="-exact-footnote" testId="settings-name-error"
         button press=saveName(nameDraft.trim()) disabled=(nameDraft.trim() == "" or nameSaving) testId="settings-name-save"
@@ -3576,9 +3630,9 @@ component Settings
             button role="radio" aria-checked=(appearance == m) press=pickAppearance(m) testId=`appearance-${m}` flex=1 height=32 border-radius=8 display="flex" align-items="center" justify-content="center" background-color=(appearance == m ? "light-dark(#e5e5ea, #3a3a3c)" : "transparent")
               text (m == "auto" ? "Auto" : m == "light" ? "Light" : "Dark")
       section
-        input type="password" value=pwCurrent input=editCurrent placeholder="Current password" aria-label="Current password" testId="pw-current" appearance="none"
-        input type="password" value=pwNew input=editNew placeholder="New password (8+ characters)" aria-label="New password" testId="pw-new" appearance="none"
-        input type="password" value=pwConfirm input=editConfirm placeholder="Confirm new password" aria-label="Confirm new password" testId="pw-confirm" appearance="none"
+        input type="password" value=pwCurrent input=editCurrent placeholder="Current password" aria-label="Current password" testId="pw-current" appearance="none" outline="none"
+        input type="password" value=pwNew input=editNew placeholder="New password (8+ characters)" aria-label="New password" testId="pw-new" appearance="none" outline="none"
+        input type="password" value=pwConfirm input=editConfirm placeholder="Confirm new password" aria-label="Confirm new password" testId="pw-confirm" appearance="none" outline="none"
         if pwError != "" and not pwSaving
           text pwError color="-exact-system-red" font="-exact-footnote" testId="pw-error"
         if pwDone and not pwSaving
@@ -3618,7 +3672,7 @@ component IconColorPicker
         text (icon == "" ? "No icon" : icon) color="-exact-secondary-label" flex=1 min-width=0
         button press=onNone aria-label="No icon or color" testId="pick-none"
           text "None"
-      input value=query input=queryEdit placeholder="Lucide icon name" aria-label="Lucide icon name" testId="icon-name-input" appearance="none"
+      input value=query input=queryEdit placeholder="Lucide icon name" aria-label="Lucide icon name" testId="icon-name-input" appearance="none" outline="none"
       if hits.length > 0
         row gap=6 flex-wrap="wrap"
           for n in hits key=n
@@ -3649,7 +3703,7 @@ component BoardCardBody
       if tk.subtaskCount > 0
         for st in subs key=st.id
           row gap=6 align-items="center" padding-left=18
-            input type="checkbox" checked=st.isDone change=toggle(st.id) aria-label=`Check off ${st.title}` testId=`board-subtask-${st.id}` flex-shrink=0
+            input type="checkbox" checked=st.isDone change=toggle(st.id) aria-label=`Check off ${st.title}` testId=`board-subtask-${st.id}` flex-shrink=0 outline="none"
             text st.title color="-exact-secondary-label" font="-exact-footnote" flex=1 min-width=0 line-clamp=1
 
 // A person on a task: their initial on their colour (the list's members carry it), small.
@@ -3956,8 +4010,8 @@ component TaskEditor
           if col != "right"
             section
               row
-                input value=title input=editTitle placeholder="Title" aria-label="Title" blur=autoSave testId="task-title" flex=1 min-width=0 appearance="none"
-                input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="task-notes-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none"
+                input value=title input=editTitle placeholder="Title" aria-label="Title" blur=autoSave testId="task-title" flex=1 min-width=0 appearance="none" outline="none"
+                input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="task-notes-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none" outline="none"
               if creating
                 row press=focusNotes width="100%" min-width=0 max-width="100%"
                   textarea id="task-notes" value=notes input=editNotes blur=autoSave placeholder="Notes" aria-label="Notes"
@@ -3989,23 +4043,23 @@ component TaskEditor
             if not simple
               section
                 row
-                  input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" blur=autoSave testId="task-url" flex=1 min-width=0 appearance="none"
+                  input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" blur=autoSave testId="task-url" flex=1 min-width=0 appearance="none" outline="none"
           if col != "right"
             if not simple
               section
                 row gap=8 align-items="center"
                   text "Date" flex=1 min-width=0
-                  input type="checkbox" switch checked=hasDate change=toggleDate aria-label="Date" testId="task-date-toggle"
+                  input type="checkbox" switch checked=hasDate change=toggleDate aria-label="Date" testId="task-date-toggle" outline="none"
                 if hasDate
                   row
-                    input type="date" value=dueDate input=editDue aria-label="Due date" blur=autoSave testId="task-due" flex=1 min-width=0
+                    input type="date" value=dueDate input=editDue aria-label="Due date" blur=autoSave testId="task-due" flex=1 min-width=0 outline="none"
                 if hasDate
                   row gap=8 align-items="center"
                     text "Time" flex=1 min-width=0
-                    input type="checkbox" switch checked=hasTime change=toggleTime aria-label="Time" testId="task-time-toggle"
+                    input type="checkbox" switch checked=hasTime change=toggleTime aria-label="Time" testId="task-time-toggle" outline="none"
                 if hasTime
                   row
-                    input type="time" value=timeText input=editTime aria-label="Time of day" blur=autoSave testId="task-time" flex=1 min-width=0
+                    input type="time" value=timeText input=editTime aria-label="Time of day" blur=autoSave testId="task-time" flex=1 min-width=0 outline="none"
                 if hasDate
                   row gap=8 align-items="center"
                     text "Repeat" flex=1 min-width=0
@@ -4030,7 +4084,7 @@ component TaskEditor
               section
                 row gap=8 align-items="center"
                   text "Flag" flex=1 min-width=0
-                  input type="checkbox" switch checked=flagged change=toggleFlag aria-label="Flag" testId="task-flag"
+                  input type="checkbox" switch checked=flagged change=toggleFlag aria-label="Flag" testId="task-flag" outline="none"
                 row gap=8 align-items="center"
                   text "Priority" flex=1 min-width=0
                   select value=prioritySel change=pickPriority aria-label="Priority" testId="task-priority" flex=1 min-width=0
@@ -4040,7 +4094,7 @@ component TaskEditor
                     option "High" value="3"
                 row
                   text "Tags"
-                  input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" blur=autoSave testId="task-tags" flex=1 min-width=0 appearance="none"
+                  input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" blur=autoSave testId="task-tags" flex=1 min-width=0 appearance="none" outline="none"
           if col != "right"
             section
               if not creating and members.length > 1
@@ -4070,15 +4124,15 @@ component TaskEditor
                     text "Subtasks" testId="subtasks-header"
                   row gap=8 align-items="center"
                     column flex=1 min-width=0 gap=4
-                      input value=subtaskDraft input=editSubtaskDraft submit=submitSubtask placeholder="Add a subtask" appearance="none"
+                      input value=subtaskDraft input=editSubtaskDraft submit=submitSubtask placeholder="Add a subtask" appearance="none" outline="none"
                         aria-label="New subtask" testId="subtask-draft"
                     button press=submitSubtask disabled=(subtaskDraft.trim() == "") testId="add-subtask"
                       text "Add"
                   for s in openSubtasks key=s.id
                     row gap=8 align-items="center"
-                      input type="checkbox" checked=s.isDone change=toggleSubtask(s.id) aria-label=`Check off ${s.title}` testId=`subtask-${s.id}`
+                      input type="checkbox" checked=s.isDone change=toggleSubtask(s.id) aria-label=`Check off ${s.title}` testId=`subtask-${s.id}` outline="none"
                       if editingSub == s.id
-                        input value=subEditDraft input=editSubDraft submit=commitSubEdit(s) blur=commitSubEdit(s) autofocus=true aria-label=`Rename ${s.title}` testId=`subtask-edit-${s.id}` flex=1 min-width=0 appearance="none"
+                        input value=subEditDraft input=editSubDraft submit=commitSubEdit(s) blur=commitSubEdit(s) autofocus=true aria-label=`Rename ${s.title}` testId=`subtask-edit-${s.id}` flex=1 min-width=0 appearance="none" outline="none"
                       else
                         view press=startSubEdit(s) flex=1 min-width=0 testId=`subtask-title-${s.id}`
                           text s.title
@@ -4094,9 +4148,9 @@ component TaskEditor
                       text "Done" color="-exact-secondary-label" font="-exact-footnote"
                     for s in doneSubtasks key=s.id
                       row gap=8 align-items="center"
-                        input type="checkbox" checked=s.isDone change=toggleSubtask(s.id) aria-label=`Check off ${s.title}` testId=`subtask-${s.id}`
+                        input type="checkbox" checked=s.isDone change=toggleSubtask(s.id) aria-label=`Check off ${s.title}` testId=`subtask-${s.id}` outline="none"
                         if editingSub == s.id
-                          input value=subEditDraft input=editSubDraft submit=commitSubEdit(s) blur=commitSubEdit(s) autofocus=true aria-label=`Rename ${s.title}` testId=`subtask-edit-${s.id}` flex=1 min-width=0 appearance="none"
+                          input value=subEditDraft input=editSubDraft submit=commitSubEdit(s) blur=commitSubEdit(s) autofocus=true aria-label=`Rename ${s.title}` testId=`subtask-edit-${s.id}` flex=1 min-width=0 appearance="none" outline="none"
                         else
                           view press=startSubEdit(s) flex=1 min-width=0 testId=`subtask-title-${s.id}`
                             text s.title color="-exact-secondary-label"
@@ -4126,7 +4180,7 @@ component TaskEditor
                 row
                   button press=trash destructive=true testId="task-delete" flex=1
                     text "Delete Task"
-    input type="file" accept="image/*" id="task-image" display="none" change=imagePicked testId="task-image-input"
+    input type="file" accept="image/*" id="task-image" display="none" change=imagePicked testId="task-image-input" outline="none"
 
 component SignIn
   props
@@ -4190,15 +4244,15 @@ component SignIn
   view
     column flex=1 min-height=0 display="flex" flex-direction="column"
       scroll flex=1 min-height=0
-        column width="min(21rem, calc(100% - 2rem))" margin="0 auto" padding="48px 16px 16px" gap=12
+        column width="min(23rem, calc(100% - 2rem))" margin="0 auto" padding="48px 16px 16px" gap=12
           image "assets/notient.svg" width=64 height=64 margin="0 auto 8px" aria-label="Notient" testId="auth-logo"
           text (mode == "signin" ? "Sign in to Notient" : "Create your account") role="heading" aria-level=1 font-size="min(-exact-title1, 31px)" text-align="center"
           if mode == "register"
-            input value=name input=editName placeholder="Name" aria-label="Name" enterkeyhint="next" testId="name" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none"
-          input type="email" value=email input=editEmail placeholder="Email" aria-label="Email" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none"
+            input value=name input=editName placeholder="Name" aria-label="Name" enterkeyhint="next" testId="name" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none" outline="none"
+          input type="email" value=email input=editEmail placeholder="Email" aria-label="Email" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none" outline="none"
             autocapitalize="none" enterkeyhint="next" autofocus=true testId="email"
           view position="relative" display="flex" align-items="center"
-            input type=(reveal ? "text" : "password") value=password input=editPassword submit=submit placeholder="Password"
+            input type=(reveal ? "text" : "password") value=password input=editPassword submit=submit placeholder="Password" outline="none"
               aria-label="Password" testId="password" flex=1 min-width=0 width="100%" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 40px 10px 12px" appearance="none"
             button press=toggleReveal aria-label=(reveal ? "Hide password" : "Show password") testId="password-reveal" position="absolute" right=8 top="50%" margin-top=-14 display="flex" appearance="none" padding=4
               LucideIcon(paths=(reveal ? eyeOffPaths : eyePaths), color="", size=20)
@@ -4214,7 +4268,7 @@ component SignIn
               text "Demo server" font="-exact-footnote" color="-exact-label" text-align="center"
               text `Sign in as ${demoEmail} with the password ${demoPassword}.` font="-exact-footnote" color="-exact-secondary-label" text-align="center"
               text "The demo account is wiped and reset every 5 minutes, so don't keep anything here." font="-exact-footnote" color="-exact-secondary-label" text-align="center"
-      column width="min(21rem, calc(100% - 2rem))" margin="0 auto" gap=8 padding="0 16px 8px"
+      column width="min(23rem, calc(100% - 2rem))" margin="0 auto" gap=8 padding="0 16px 8px"
         button press=toggleServer testId="server-toggle"
           text (server == "" ? "Use your own server" : `Server: ${server}`) font="-exact-footnote" color="-exact-secondary-label"
         if serverOpen
@@ -4228,7 +4282,7 @@ component SignIn
                 if server == s
                   image "symbol:checkmark" width=14 height=14
                 text s font="-exact-footnote" color="-exact-label"
-          input type="url" value=serverDraft input=editServer submit=useTyped placeholder="Add a server: https://notes.example.com" aria-label="Server address" autocapitalize="none" autocorrect="off" testId="server-input" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none"
+          input type="url" value=serverDraft input=editServer submit=useTyped placeholder="Add a server: https://notes.example.com" aria-label="Server address" autocapitalize="none" autocorrect="off" testId="server-input" border="1px solid light-dark(#c6c6c8, #48484a)" border-radius=10 padding="10px 12px" appearance="none" outline="none"
           if serverError != ""
             text serverError color="-exact-system-red" testId="server-error"
           button press=useTyped buttonStyle="bordered" testId="server-save"
@@ -4280,7 +4334,7 @@ component NoteBlocks
       for b in blocks key=`${b.index}`
         if b.kind == "task"
           row gap=8 align-items="flex-start" padding-left=`${16 + b.indent * 10}px` padding-right="16px"
-            input type="checkbox" checked=b.checked disabled=(not editable) change=toggleBlock(b.index) aria-label=`Check off ${b.text}` testId=`view-task-${b.index}`
+            input type="checkbox" checked=b.checked disabled=(not editable) change=toggleBlock(b.index) aria-label=`Check off ${b.text}` testId=`view-task-${b.index}` outline="none"
             text b.text markup="markdown" flex=1 min-width=0 user-select="text" overflow-wrap="anywhere" width="100%" max-width="100%" box-sizing="border-box" font-size=17 line-height="26px"
         else if b.kind == "image"
           column width="100%" padding="4px 16px" box-sizing="border-box" testId=`view-image-${b.index}`
@@ -4480,10 +4534,16 @@ component NoteEditor
           image "symbol:lock"
         button press=togglePin aria-label=(pinned ? "Unpin note" : "Pin note") testId="note-pin"
           image "symbol:pin"
-        button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
-          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
-        button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
-          LucideIcon(paths=["M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4 14h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M17 14h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"], color="-exact-label", size=18)
+        if wide
+          button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
+            LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
+          button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
+            LucideIcon(paths=["M4 3h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4 14h7a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z", "M17 14h2a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1z"], color="-exact-label", size=18)
+        else
+          button press=exportIt aria-label="Export Note…" -exact-menu="file" testId="note-export" disabled=(noteId == "")
+            image "symbol:download"
+          button press=saveTpl aria-label="Save as template" testId="note-template" disabled=(title.trim() == "" and body.trim() == "")
+            image "symbol:sf/doc.badge.plus"
         button press=share(noteId) aria-label="Share" testId="note-share"
           image "symbol:share"
         button press=trash aria-label="Move to Trash" testId="note-trash"
@@ -4496,7 +4556,7 @@ component NoteEditor
             image "symbol:compose"
       row display=(chromeHidden ? "none" : "flex") gap=8 align-items="center" padding="8px 16px" flex-wrap="wrap"
         if titleEditing
-          input value=title input=editTitle placeholder="Title" aria-label="Title" autofocus=true appearance="none"
+          input value=title input=editTitle placeholder="Title" aria-label="Title" autofocus=true appearance="none" outline="none"
             submit=doneTitleEdit testId="note-title" flex=1 min-width=0
           button press=doneTitleEdit aria-label="Done" testId="note-title-done"
             image "symbol:checkmark"
@@ -4521,7 +4581,7 @@ component NoteEditor
             button appearance="none" press=onImage("remove") retainFocus=true aria-label="Remove image" testId="image-remove" min-height=40 padding=8
               image "symbol:delete"
         // Hidden bridge for the iOS format bar hatch (inert on the web).
-        input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="fmt-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none"
+        input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="fmt-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none" outline="none"
         scroll flex=1 min-height=0 width="100%" overflow-x="hidden" box-sizing="border-box" scroll=onScroll testId="note-edit-scroll"
           // Native: the column is exactly the viewport and the textarea fills it and scrolls itself
           // (a UITextView taps, selects and keeps its caret in view). On the web the page script
@@ -4544,11 +4604,11 @@ component NoteEditor
         if imageError != ""
           text imageError color="-exact-system-red" font="-exact-footnote" testId="note-image-error"
         text metaLine color="-exact-secondary-label" font="-exact-footnote" testId="note-info"
-      input type="file" accept="image/*" multiple=true id="note-image" display="none" change=imagePicked testId="note-image-input"
+      input type="file" accept="image/*" multiple=true id="note-image" display="none" change=imagePicked testId="note-image-input" outline="none"
     column id="note-folder-pop" popover="auto" padding=8 gap=4 testId="note-folder-pop"
       row gap=8 align-items="center"
         text "Folder" font="-exact-footnote" color="-exact-secondary-label"
-        input value=folder input=editFolder placeholder="None" aria-label="Folder" autofocus=true appearance="none"
+        input value=folder input=editFolder placeholder="None" aria-label="Folder" autofocus=true appearance="none" outline="none"
           testId="note-folder" flex=1 min-width=0
       for f, i in folderMatches key=f
         button appearance="none" press=pickFolder(f) retainFocus=true aria-label=`Use folder ${f}` testId=`folder-suggest-${i}` text-align="start" padding="6px 8px"
@@ -4556,7 +4616,7 @@ component NoteEditor
     column id="note-tags-pop" popover="auto" padding=8 gap=4 testId="note-tags-pop"
       row gap=8 align-items="center"
         text "Tags" font="-exact-footnote" color="-exact-secondary-label"
-        input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" autofocus=true appearance="none"
+        input value=tagsText input=editTags placeholder="Comma, separated" aria-label="Tags" autofocus=true appearance="none" outline="none"
           testId="note-tags" flex=1 min-width=0
       for t, i in tagMatches key=t
         button appearance="none" press=pickTag(t) retainFocus=true aria-label=`Add tag ${t}` testId=`tag-suggest-${i}` text-align="start" padding="6px 8px"
@@ -4634,7 +4694,7 @@ component DesktopSidebar
     toggleFold: action
     newFolder: action
   view
-    column testId="sidebar" width="21rem" height="100%" flex-shrink=0 box-sizing="border-box" padding=12 gap=6 display="flex" flex-direction="column" background-color="light-dark(#eef1f6, #1a1c21)"
+    column testId="sidebar" width="23rem" height="100%" flex-shrink=0 box-sizing="border-box" padding=12 gap=6 display="flex" flex-direction="column" background-color="light-dark(#eef1f6, #1a1c21)"
       view testId="sidebar-top" height=32 flex-shrink=0
       scroll flex="1 1 0%" min-height=0 overflow-y="auto"
         column gap=10
@@ -4647,28 +4707,26 @@ component DesktopSidebar
                 text "Notes" font="-exact-headline"
               button press=newNote aria-label="New Note" testId="side-new-note" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
                 image "symbol:compose" width=16 height=16
+              button popovertarget="sort-menu" aria-label="Sort" testId="side-sort" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
+                image "symbol:sort" width=16 height=16
+              button press=newFolder aria-label="New Folder" testId="side-new-note-folder" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
+                LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=16)
               button press=trash aria-label="Trash" testId="side-trash" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
                 image "symbol:delete" width=16 height=16
             if notesOpen
-              row gap=6 align-items="center" padding-left=38
-                view flex=1 min-width=0
-                button popovertarget="sort-menu" aria-label="Sort" testId="side-sort" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
-                  image "symbol:sort" width=16 height=16
-                button press=newFolder aria-label="New Folder" testId="side-new-note-folder" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
-                  LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=16)
               column gap=1 padding-left=38 max-height=(notesTall ? "none" : "16rem") overflow=(notesTall ? "visible" : "hidden auto") testId="side-notes-tree"
                 if notes.length == 0
                   text (query.trim() == "" ? "No notes yet." : "No matches.") flex-shrink=0 font="-exact-footnote" color="-exact-secondary-label" padding="4px 8px" testId="side-notes-empty"
                 for f in noteFolders key=f
-                  if notes.filter(n => inFolder(n, f)).length > 0
+                  if (notes.filter(n => inFolder(n, f)).length > 0 or f != "") and noteFolders.filter(a => a != "" and f.startsWith(a + "/") and folded(openedRows, `n:${a}`)).length == 0
                     if noteFolders.length > 1
-                      button press=toggleFold(`n:${f}`) aria-label=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? `Collapse ${folderLabel(f)}` : `Expand ${folderLabel(f)}`) testId=`side-folder-${f}` appearance="none" width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding="0 8px" border-radius=6 display="flex" align-items="center" gap=6
+                      button press=toggleFold(`n:${f}`) aria-label=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? `Collapse ${folderLabel(f)}` : `Expand ${folderLabel(f)}`) testId=`side-folder-${f}` appearance="none" width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(8 + folderDepth(f) * 16) padding-right=8 border-radius=6 display="flex" align-items="center" gap=6
                         image "symbol:forward-chevron" width=11 height=11 flex-shrink=0 transform=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? "rotate(90deg)" : "rotate(0deg)")
-                        text folderLabel(f) font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 line-clamp=1 text-align="start"
+                        text (f == "" ? "Unfiled" : lastSegment(f)) font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 line-clamp=1 text-align="start"
                         text `${notes.filter(n => inFolder(n, f)).length}` font="-exact-footnote" color="-exact-secondary-label"
                     if (not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0)
                       for n in notes.filter(n => inFolder(n, f)) key=n.id
-                        button press=openNote(n.id) appearance="none" testId=`side-note-${n.id}` width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(noteFolders.length > 1 ? 24 : 8) padding-right=8 border-radius=6 display="flex" align-items="center" background-color=(selected == n.id ? "light-dark(#dde4f0, #2e3441)" : "transparent") contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
+                        button press=openNote(n.id) appearance="none" testId=`side-note-${n.id}` width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(noteFolders.length > 1 ? 24 + folderDepth(f) * 16 : 8) padding-right=8 border-radius=6 display="flex" align-items="center" background-color=(selected == n.id ? "light-dark(#dde4f0, #2e3441)" : "transparent") contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                           text (n.title.trim() == "" ? "Untitled" : n.title) font="-exact-footnote" font-weight=600 line-clamp=1 text-align="start"
               if notes.length + noteFolders.length > 9
                 button press=toggleNotesTall testId="side-notes-more" appearance="none" height=24 padding="0 8px 0 46px" display="flex" align-items="center" color="-exact-secondary-label"
@@ -4729,7 +4787,7 @@ component DesktopSidebar
       column id="side-folder-pop" popover="auto" padding=8 gap=4 width="17.5rem" testId="side-folder-pop"
         row gap=8 align-items="center"
           column flex=1 min-width=0 gap=4
-            input value=folderDraft input=editFolder submit=addFolder placeholder="New folder for lists" aria-label="New folder" autofocus=true testId="side-folder-draft" appearance="none"
+            input value=folderDraft input=editFolder submit=addFolder placeholder="New folder for lists" aria-label="New folder" autofocus=true testId="side-folder-draft" appearance="none" outline="none"
             if folderError != ""
               text folderError font="-exact-footnote" color="-exact-system-red" testId="side-folder-error"
           button press=addFolder disabled=(folderDraft.trim() == "") testId="side-add-folder"
@@ -4767,10 +4825,25 @@ component SearchResults
     openNote: action
     openTask: action
     openEvent: action
+    openFolder: action
+    openList: action
   view
     column gap=2 width="100%" testId="search-results"
-      if found.q == q.trim() and found.notes.length + found.tasks.length + found.events.length == 0 and not busy
+      if found.q == q.trim() and found.notes.length + found.tasks.length + found.events.length + found.folders.length + found.lists.length == 0 and not busy
         text "No matches." color="-exact-secondary-label" font="-exact-footnote" padding=8 testId="search-empty"
+      if found.folders.length > 0
+        text "Folders" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for f in found.folders key=f.id
+          button press=openFolder(f.id) appearance="none" width="100%" text-align="start" padding="6px 8px" border-radius=8 testId=`found-folder-${f.id}`
+            column gap=1 min-width=0
+              text f.title font-weight=600 line-clamp=1
+              if f.sub != ""
+                text f.sub font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+      if found.lists.length > 0
+        text "Lists" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for l in found.lists key=l.id
+          button press=openList(l.id) appearance="none" width="100%" text-align="start" padding="6px 8px" border-radius=8 testId=`found-list-${l.id}`
+            text l.title font-weight=600 line-clamp=1
       if found.notes.length > 0
         text "Notes" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
         for n in found.notes key=n.id
@@ -4865,10 +4938,10 @@ component ManageCalendars
                     text c.name
                     if c.syncKind != ""
                       text (c.syncError != "" ? c.syncError : c.syncKind == "caldav" ? "CalDAV · read-only" : "Web calendar · read-only") font="-exact-footnote" color=(c.syncError != "" ? "-exact-system-red" : "-exact-secondary-label") testId=`cal-sub-${c.id}`
-            input type="checkbox" checked=c.isActive change=setVisible(c.id) aria-label=`Show ${c.name}` testId=`cal-visible-${c.id}`
+            input type="checkbox" checked=c.isActive change=setVisible(c.id) aria-label=`Show ${c.name}` testId=`cal-visible-${c.id}` outline="none"
           if editId == c.id and c.type != "tasks"
             row
-              input value=editName input=rename placeholder="Name" aria-label="Name" testId="cal-edit-name" flex=1 min-width=0 appearance="none"
+              input value=editName input=rename placeholder="Name" aria-label="Name" testId="cal-edit-name" flex=1 min-width=0 appearance="none" outline="none"
             ColorSwatches(color=editColor, onColor=pickColor, prefix="cal-color-")
             if error != "" and not saving
               row
@@ -4941,9 +5014,9 @@ component AddCalendar
       if mode == "link"
         section
           row
-            input value=url input=editUrl placeholder="webcal:// or https:// link" aria-label="Calendar link" type="url" autocapitalize="none" autocorrect="off" testId="sub-url" flex=1 min-width=0 appearance="none"
+            input value=url input=editUrl placeholder="webcal:// or https:// link" aria-label="Calendar link" type="url" autocapitalize="none" autocorrect="off" testId="sub-url" flex=1 min-width=0 appearance="none" outline="none"
           row
-            input value=name input=editName placeholder="Name (optional)" aria-label="Name" testId="sub-name" flex=1 min-width=0 appearance="none"
+            input value=name input=editName placeholder="Name (optional)" aria-label="Name" testId="sub-name" flex=1 min-width=0 appearance="none" outline="none"
         section
           row
             text "iCloud: share the calendar with Public Calendar on and copy the link. Google: Settings, the calendar, Secret address in iCal format. Outlook: Publish calendar, ICS link." font="-exact-footnote" color="-exact-secondary-label"
@@ -4966,11 +5039,11 @@ component AddCalendar
               text "Yahoo"
         section
           row
-            input value=server input=editServer placeholder="Server address" aria-label="Server" type="url" autocapitalize="none" autocorrect="off" testId="sub-server" flex=1 min-width=0 appearance="none"
+            input value=server input=editServer placeholder="Server address" aria-label="Server" type="url" autocapitalize="none" autocorrect="off" testId="sub-server" flex=1 min-width=0 appearance="none" outline="none"
           row
-            input value=user input=editUser placeholder="Username" aria-label="Username" autocapitalize="none" autocorrect="off" testId="sub-user" flex=1 min-width=0 appearance="none"
+            input value=user input=editUser placeholder="Username" aria-label="Username" autocapitalize="none" autocorrect="off" testId="sub-user" flex=1 min-width=0 appearance="none" outline="none"
           row
-            input value=pass input=editPass type="password" placeholder="Password" aria-label="Password" testId="sub-pass" flex=1 min-width=0 appearance="none"
+            input value=pass input=editPass type="password" placeholder="Password" aria-label="Password" testId="sub-pass" flex=1 min-width=0 appearance="none" outline="none"
         section
           row
             column gap=6 align-items="flex-start"
@@ -4991,7 +5064,7 @@ component AddCalendar
               row gap=10 align-items="center"
                 view width=12 height=12 border-radius=6 background-color=dotOf(f.color)
                 text f.name flex=1 min-width=0
-                input type="checkbox" checked=picked.split("\n").includes(f.url) change=toggle(f.url) aria-label=`Add ${f.name}` testId=`sub-pick-${f.name}`
+                input type="checkbox" checked=picked.split("\n").includes(f.url) change=toggle(f.url) aria-label=`Add ${f.name}` testId=`sub-pick-${f.name}` outline="none"
           if connectError != ""
             section
               row
@@ -5118,26 +5191,26 @@ component EventEditor
     list id="event-edit" appearance="auto" listStyle="inset-grouped" flex=1 min-height=0
       section
         row
-          input value=title input=editTitle placeholder="Title" aria-label="Title" autofocus=creating enterkeyhint="next" testId="event-title" flex=1 min-width=0 appearance="none"
-          input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="event-notes-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none"
+          input value=title input=editTitle placeholder="Title" aria-label="Title" autofocus=creating enterkeyhint="next" testId="event-title" flex=1 min-width=0 appearance="none" outline="none"
+          input hatch="formatbar" data-role="bridge" data-formats=fmtFormats data-unavailable=fmtUnavailable data-link=fmtLink value=bridgeValue input=bridgeInput aria-hidden=true testId="event-notes-bridge" position="absolute" width="0.1rem" height="0.1rem" opacity=0 pointer-events="none" outline="none"
         row
-          input value=location input=editLocation placeholder="Location" aria-label="Location" testId="event-location" flex=1 min-width=0 appearance="none"
+          input value=location input=editLocation placeholder="Location" aria-label="Location" testId="event-location" flex=1 min-width=0 appearance="none" outline="none"
       section
         row gap=8 align-items="center"
           text "All-day" flex=1 min-width=0
-          input type="checkbox" switch checked=allDay change=toggleAllDay aria-label="All-day" testId="event-allday"
+          input type="checkbox" switch checked=allDay change=toggleAllDay aria-label="All-day" testId="event-allday" outline="none"
         row gap=8 align-items="center"
           text "Starts" flex=1 min-width=0
-          input type="date" value=startDay input=editStartDay aria-label="Start date" testId="event-start-day" flex=1 min-width=0
+          input type="date" value=startDay input=editStartDay aria-label="Start date" testId="event-start-day" flex=1 min-width=0 outline="none"
         if not allDay
           row
-            input type="time" value=startTime input=editStartTime aria-label="Start time" testId="event-start-time" flex=1 min-width=0
+            input type="time" value=startTime input=editStartTime aria-label="Start time" testId="event-start-time" flex=1 min-width=0 outline="none"
         row gap=8 align-items="center"
           text "Ends" flex=1 min-width=0
-          input type="date" value=endDay input=editEndDay aria-label="End date" testId="event-end-day" flex=1 min-width=0
+          input type="date" value=endDay input=editEndDay aria-label="End date" testId="event-end-day" flex=1 min-width=0 outline="none"
         if not allDay
           row
-            input type="time" value=endTime input=editEndTime aria-label="End time" testId="event-end-time" flex=1 min-width=0
+            input type="time" value=endTime input=editEndTime aria-label="End time" testId="event-end-time" flex=1 min-width=0 outline="none"
       section
         row gap=8 align-items="center"
           text "Repeat" flex=1 min-width=0
@@ -5171,9 +5244,9 @@ component EventEditor
             view width=10 height=10 border-radius=5 flex-shrink=0 background-color=calColor(calendars, calNow)
             text calOf(calendars, calNow).name color="-exact-secondary-label" testId="event-calendar" flex=1 min-width=0
         row
-          input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" testId="event-url" flex=1 min-width=0 appearance="none"
+          input type="url" value=url input=editUrl placeholder="URL" aria-label="URL" testId="event-url" flex=1 min-width=0 appearance="none" outline="none"
         row
-          input value=attendeesText input=editAttendees placeholder="Attendees, comma, separated" aria-label="Attendees" appearance="none"
+          input value=attendeesText input=editAttendees placeholder="Attendees, comma, separated" aria-label="Attendees" appearance="none" outline="none"
             inputmode="email" testId="event-attendees" flex=1 min-width=0
       section
         row press=focusNotes
@@ -5291,7 +5364,7 @@ component MarkdownToolbar
                 path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM21 15l-3.09-3.09a2 2 0 0 0-2.82 0L6 21M11 9a2 2 0 1 1-4 0 2 2 0 0 1 4 0z" fill="none" stroke="currentcolor" stroke-width=2 stroke-linecap="round" stroke-linejoin="round"
       if linkOpen
         row gap=6 align-items="center" width="100%"
-          input id=`${prefix}-link-url` value=linkUrl input=linkChanged submit=applyLink aria-label="Link URL" placeholder="https://example.com" testId=`${prefix}-link-url` flex=1 min-width=0 padding=8 appearance="none"
+          input id=`${prefix}-link-url` value=linkUrl input=linkChanged submit=applyLink aria-label="Link URL" placeholder="https://example.com" testId=`${prefix}-link-url` flex=1 min-width=0 padding=8 appearance="none" outline="none"
           button appearance="none" press=applyLink retainFocus=true testId=`${prefix}-link-apply` min-height=40 padding=8
             text (linkUrl == "" ? "Remove link" : "Apply") font-size=13
           button appearance="none" press=cancelLink testId=`${prefix}-link-cancel` min-height=40 padding=8
