@@ -918,6 +918,8 @@ const sources: Sources = {
   // A folder made on purpose, before any note is filed in it; the parent path is optional.
   makeNoteFolder: async ([name, parent], store) =>
     reply(await callWith(store, '/note-folders', { method: 'POST', body: JSON.stringify({ name, parent }) })),
+  // An empty folder (and its empty subfolders) goes; the server refuses while a note is still in it.
+  deleteNoteFolder: async ([path], store) => reply(await callWith(store, `/note-folders?path=${encodeURIComponent(path)}`, { method: 'DELETE' })),
   saveNoteTemplate: async ([name, title, body], store) =>
     reply(await callWith(store, '/templates', { method: 'POST', body: JSON.stringify({ kind: 'note', name, payload: { title, body } }) })),
   // A list becomes a template: its sections in order and its open tasks (with their open subtasks), without dates or people.

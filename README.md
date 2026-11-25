@@ -6,6 +6,22 @@ An Apple-inspired notes, tasks and calendar suite that runs anywhere and is fast
 - **Fast.** Local-first reads, an offline cache, live updates over a WebSocket. Nothing waits on a spinner you could have avoided.
 - **Yours.** The server is a small Express and SQLite process you run yourself. Notes are plain Markdown files on disk.
 
+## Screenshots
+
+**macOS**
+
+| | |
+| --- | --- |
+| ![Notes home on macOS](screenshots/mac-notes.png) | ![Kanban board on macOS](screenshots/mac-board.png) |
+| ![Calendar on macOS](screenshots/mac-calendar.png) | ![Note editor on macOS](screenshots/mac-editor.png) |
+
+**iPhone**
+
+| | | |
+| --- | --- | --- |
+| ![Notes on iPhone](screenshots/ios-notes.png) | ![Task list on iPhone](screenshots/ios-tasks.png) | ![Kanban board on iPhone](screenshots/ios-board.png) |
+| ![Calendar on iPhone](screenshots/ios-calendar.png) | ![Search on iPhone](screenshots/ios-search.png) | ![Editing a note on iPhone](screenshots/ios-editor.png) |
+
 ## What's in it
 
 **Notes**

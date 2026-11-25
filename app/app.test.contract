@@ -2538,6 +2538,37 @@ test "a folder is made from the notes home, inside a parent, before any note is 
   clock settle
   expect state lib.folders.1 == "Dev/Auth"
 
+test "an empty folder and its empty subfolder are deleted from the folder's context menu"
+  type "email" "rmfolder@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Rm"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "new-note-folder"
+  clock settle
+  type "new-folder-name" "Dev"
+  tap "new-folder-create"
+  clock data
+  clock settle
+  tap "new-note-folder"
+  clock settle
+  type "new-folder-name" "Auth"
+  type "new-folder-parent" "Dev"
+  tap "new-folder-create"
+  clock data
+  clock settle
+  expect tree has "folder-Dev/Auth"
+  tap "folder-toggle-Dev" contextmenu
+  clock settle
+  tap "ctx-folder-delete"
+  clock data
+  clock settle
+  expect tree missing "folder-Dev"
+  expect tree missing "folder-Dev/Auth"
+
 test "board columns collapse from the right only when they cannot all fit"
   size 900x800
   type "email" "fit1@example.com"

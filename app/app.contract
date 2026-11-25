@@ -805,6 +805,7 @@ component App
   // The event, list and calendar a context menu was opened on ("" none).
   state ctxEvent = ""
   state ctxList = ""
+  state ctxFolder = ""
   state ctxSection = ""
   state ctxCal = ""
   state folderDraft = ""
@@ -878,6 +879,7 @@ component App
   derive newTaskOpen = sheet == "newTask" or stack(nav).filter(e => e.name == "newTask").length > 0
   derive sectionsListId = openList != "" ? openList : newTaskOpen ? newTaskListId : ""
   derive blankTask = Task(id="", title="", isDone=false, notes="", dueAt=0, dueDay="", dueTime="", dueHasTime=false, remindAt=0, flagged=false, recurrence="none", url="", priority=0, tags=[], sectionId="", version=0, sortOrder=0, subtaskCount=0, latestBody="", latestBy="", latestAt=0, parentId="", assigneeId="", completedAt=0)
+  derive ctxFolderEmpty = ctxFolder != "" and lib.notes.filter(n => underFolder(n, ctxFolder) and n.deletedAt == 0).length == 0
   derive ctxNoteRow = match first(lib.notes.filter(x => x.id == ctxNote)) { case some(n) => n, case none => Note(id="", title="", body="", isPinned=false, tags=[], folder="", updatedAt=0, deletedAt=0, version=0) }
   derive ctxCalRow = calOf(calendars.calendars, ctxCal)
   derive ctxRow = match first(tasks.tasks.filter(x => x.id == ctxTask)) { case some(t) => t, case none => blankTask }
@@ -1055,6 +1057,7 @@ component App
   mutation listAdded as shape Reply queue refreshes lists then afterListAdd
   mutation templateSaved as shape Reply refreshes templates then afterTemplateSaved
   mutation folderMade as shape Reply refreshes lib then afterFolderMade
+  mutation folderRemoved as shape Reply refreshes lib
   mutation templateDeleted as shape Reply refreshes templates
   mutation listMade as shape ListMade queue refreshes lists, sections, tasks, boardSubtasks, recentTasks then afterListMade
   mutation noneRenamed as shape Reply queue refreshes lists then afterNoneRename
@@ -2005,6 +2008,11 @@ component App
     nav = push(nav, path("eventDetail", ctxEvent))
   action ctxEventDelete
     send ctxEventDeleted = deleteEvent(ctxEvent)
+  action openFolderMenu(f: string)
+    ctxFolder = f
+  action ctxFolderDelete
+    if ctxFolderEmpty
+      send folderRemoved = deleteNoteFolder(ctxFolder)
   action openListMenu(id: string)
     ctxList = id
   action ctxListOpen
@@ -2240,7 +2248,7 @@ component App
               column position="absolute" top=44 left=0 width="26rem" max-width="90vw" max-height="70vh" overflow-y="auto" pointer-events="auto" z-index=30 box-sizing="border-box" padding=8 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" testId="search-pop"
                 SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent, openFolder=openFoundFolder, openList=openFoundList)
         if sideOpen
-          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query="", tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=runSearch, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
+          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query="", tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openFolderMenu=openFolderMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=runSearch, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
       column flex=1 min-width=0 min-height=0 position="relative" margin-top=0
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -2288,7 +2296,7 @@ component App
                         text "Notes" role="heading" aria-level=1 flex=1 min-width=0
                       if wide
                         button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-notes"
-                          image "symbol:document"
+                          image "symbol:sf/rectangle.3.offgrid"
                         button press=openNewNote aria-label="New Note" testId="add-note"
                           image "symbol:compose"
                         button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes-wide"
@@ -2357,7 +2365,7 @@ component App
                           if (sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, "", tagFilter)).length > 0 or (f != "" and tagFilter == "")) and not insideShut(shutFolders, f)
                             section
                               header
-                                button press=toggleFolderOpen(f) disabled=(f == "") appearance="none" padding-left=(folderDepth(f) * 16) aria-label=(f == "" ? "Unfiled" : folderShut(shutFolders, f) ? `Expand ${f}` : `Collapse ${f}`) testId=`folder-toggle-${f}`
+                                button press=toggleFolderOpen(f) disabled=(f == "") appearance="none" padding-left=(folderDepth(f) * 16) aria-label=(f == "" ? "Unfiled" : folderShut(shutFolders, f) ? `Expand ${f}` : `Collapse ${f}`) testId=`folder-toggle-${f}` contextPopover="folder-ctx-menu" contextmenu=openFolderMenu(f)
                                   row gap=6 align-items="center"
                                     if f != ""
                                       image "symbol:forward-chevron" width=11 height=11 transform=(folderShut(shutFolders, f) ? "rotate(0deg)" : "rotate(90deg)")
@@ -2589,7 +2597,7 @@ component App
                       if not wide
                         text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
                       button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-tasks"
-                        image "symbol:document"
+                        image "symbol:sf/rectangle.3.offgrid"
                       button press=openNewList aria-label="New list" testId="new-list-button"
                         image "symbol:list"
                       button popovertarget="new-folder-pop" aria-label="New folder" testId="new-folder-button"
@@ -3165,6 +3173,15 @@ component App
           text "Oldest"
         button role="menuitem" press=setSort("title") popovertarget="sort-menu" popovertargetaction="hide" testId="sort-title"
           text "Title"
+      column id="folder-ctx-menu" popover="auto" role="menu" aria-label="Folder options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="folder-ctx-menu"
+        if ctxFolderEmpty
+          button role="menuitem" destructive=true press=ctxFolderDelete popovertarget="folder-ctx-menu" popovertargetaction="hide" testId="ctx-folder-delete"
+            image "symbol:delete"
+            text "Delete Folder"
+        else
+          button role="menuitem" disabled=true testId="ctx-folder-busy"
+            image "symbol:delete"
+            text "Folder Isn’t Empty"
       column id="list-ctx-menu" popover="auto" role="menu" aria-label="List options" padding=8 gap=4 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" min-width="15rem" testId="list-ctx-menu"
         button press=ctxListOpen popovertarget="list-ctx-menu" popovertargetaction="hide" testId="ctx-list-open"
           text "Open List"
@@ -4701,6 +4718,7 @@ component DesktopSidebar
     fetched: IconPaths[]
     pick: action
     openListMenu: action
+    openFolderMenu: action
     openNote: action
     openNoteMenu: action
     openEventMenu: action
@@ -4746,7 +4764,7 @@ component DesktopSidebar
                 for f in noteFolders key=f
                   if (notes.filter(n => inFolder(n, f)).length > 0 or f != "") and noteFolders.filter(a => a != "" and f.startsWith(a + "/") and folded(openedRows, `n:${a}`)).length == 0
                     if noteFolders.length > 1
-                      button press=toggleFold(`n:${f}`) aria-label=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? `Collapse ${folderLabel(f)}` : `Expand ${folderLabel(f)}`) testId=`side-folder-${f}` appearance="none" width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(8 + folderDepth(f) * 16) padding-right=8 border-radius=6 display="flex" align-items="center" gap=6
+                      button press=toggleFold(`n:${f}`) aria-label=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? `Collapse ${folderLabel(f)}` : `Expand ${folderLabel(f)}`) testId=`side-folder-${f}` appearance="none" width="100%" height=28 flex-shrink=0 box-sizing="border-box" padding-left=(8 + folderDepth(f) * 16) padding-right=8 border-radius=6 display="flex" align-items="center" gap=6 contextPopover="folder-ctx-menu" contextmenu=openFolderMenu(f)
                         image "symbol:forward-chevron" width=11 height=11 flex-shrink=0 transform=((not folded(openedRows, `n:${f}`) or query.trim() != "" or notes.filter(x => x.id == selected and inFolder(x, f)).length > 0) ? "rotate(90deg)" : "rotate(0deg)")
                         text (f == "" ? "Unfiled" : lastSegment(f)) font="-exact-footnote" color="-exact-secondary-label" flex=1 min-width=0 line-clamp=1 text-align="start"
                         text `${notes.filter(n => inFolder(n, f)).length}` font="-exact-footnote" color="-exact-secondary-label"
