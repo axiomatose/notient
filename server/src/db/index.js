@@ -8,6 +8,7 @@ import { createTaskAttachmentsRepository } from "./taskAttachments.js";
 import { createTaskNotesRepository } from "./taskNotes.js";
 import { createTemplatesRepository } from "./templates.js";
 import { createNoteFoldersRepository } from "./noteFolders.js";
+import { createSearchRepository } from "./search.js";
 import { createTaskListSharesRepository } from "./taskListShares.js";
 import { createNoteSharesRepository } from "./noteShares.js";
 import { createShareableLinksRepository } from "./shareableLinks.js";
@@ -149,12 +150,14 @@ function applyMigrations(db) {
 }
 
 export function createRepositories(db, config) {
+  const noteRepo = notes.createNotesRepository(db, config);
   return {
     users: users.createUserRepository(db),
     tasks: tasks.createTasksRepository(db),
     taskLists: taskLists.createTaskListsRepository(db),
     taskSections: taskSections.createTaskSectionsRepository(db),
-    notes: notes.createNotesRepository(db, config),
+    notes: noteRepo,
+    search: createSearchRepository(db, { notes: noteRepo }),
     devices: devices.createDeviceRepository(db),
     checkpoints: checkpoints.createCheckpointsRepository(db),
     taskNotifications: createTaskNotificationsRepository(db),

@@ -71,12 +71,13 @@ test "a note is written, opened, edited, filed, tagged, trashed and restored"
   tap "tag-all"
   clock settle
   expect state tagFilter == ""
-  tap "notes-search-open"
+  tap "search-open"
   clock settle
-  type "notes-search" "weekly"
+  type "search-sheet-input" "weekly"
+  clock data
   clock settle
-  expect state notesShown.length == 1
-  type "notes-search" ""
+  expect state found.notes.length == 1
+  tap "search-sheet-close"
   clock settle
   tap "open-trash"
   clock settle
@@ -1739,16 +1740,19 @@ test "the sidebar's notes tree searches, folds and grows"
   clock data
   clock settle
   expect state sideNotes.length == 2
-  type "side-search" "alpha"
+  type "search-all" "alpha"
+  clock data
   clock settle
-  expect state sideNotes.length == 1
-  type "side-search" "zzz"
+  expect state found.notes.length == 1
+  expect tree has "search-pop"
+  type "search-all" "zzz"
+  clock data
   clock settle
-  expect state sideNotes.length == 0
-  expect tree has "side-notes-empty"
-  type "side-search" ""
+  expect state found.notes.length == 0
+  expect tree has "search-empty"
+  type "search-all" ""
   clock settle
-  expect state sideNotes.length == 2
+  expect tree missing "search-pop"
   expect state sideNotesTall == false
   tap "side-notes-fold"
   clock settle
@@ -2519,6 +2523,87 @@ test "a folder is made from the notes home, inside a parent, before any note is 
   clock data
   clock settle
   expect state lib.folders.1 == "Dev/Auth"
+
+test "board columns collapse from the right only when they cannot all fit"
+  size 900x800
+  type "email" "fit1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-tab-tasks"
+  clock settle
+  tap "side-new-list"
+  clock settle
+  type "edit-list-name" "Fit"
+  tap "edit-list-save"
+  clock data
+  clock settle
+  tap "Fit"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-view-toggle"
+  clock settle
+  expect tree has "board-col-none"
+  expect state boardAutoShut.length == 0
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "A"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "B"
+  tap "add-section"
+  clock data
+  clock settle
+  tap "list-menu"
+  clock settle
+  tap "menu-add-section"
+  clock settle
+  type "section-draft" "C"
+  tap "add-section"
+  clock data
+  clock settle
+  expect state boardAutoShut.length == 2
+  expect tree has "board-col-none"
+  expect tree missing "board-open-none"
+
+test "one search over notes, tasks and events opens what it finds"
+  size 1280x800
+  type "email" "find1@example.com"
+  type "password" "Passw0rd!23"
+  tap "toggle-auth"
+  clock settle
+  type "name" "Fi"
+  tap "submit-auth"
+  clock data
+  clock settle
+  tap "side-new-note"
+  clock settle
+  type "note-title" "Tomato notes"
+  type "note-body" "water daily"
+  tap "note-save"
+  clock data
+  clock settle
+  type "search-all" "tomato"
+  clock data
+  clock settle
+  expect state found.notes.length == 1
+  expect state found.tasks.length == 0
+  expect state found.events.length == 0
+  tap "search-all"
+  clock settle
+  expect tree has "search-results"
 
 test "on a wide window a task opens as a bottom drawer over its list"
   size 1280x800

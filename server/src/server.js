@@ -30,6 +30,7 @@ import { createPublicRouter } from "./routes/public.js";
 import { createTaskListFoldersRouter } from "./routes/tasklistFolders.js";
 import { createTemplatesRouter } from "./routes/templates.js";
 import { createNoteFoldersRouter } from "./routes/noteFolders.js";
+import { createSearchRouter } from "./routes/search.js";
 import { createCalendarsRouter } from "./routes/calendars.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { createSharesRouter } from "./routes/shares.js";
@@ -324,6 +325,7 @@ export async function buildApp({ config, db }) {
   );
   app.use("/templates", createTemplatesRouter({ repos, requireAuth }));
   app.use("/note-folders", createNoteFoldersRouter({ repos, requireAuth }));
+  app.use("/search", createSearchRouter({ repos, requireAuth }));
   app.use(
     "/tasklist-folders",
     createTaskListFoldersRouter({

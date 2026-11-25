@@ -119,3 +119,7 @@ The `ai` hatch also builds for macOS 26+ (`app.json` hatches `ai: ["ios","macos"
 
 ## Kanban cards on narrow windows
 - Wide windows: the whole card is the drag handle (hold to lift). Narrow windows: the card has a grip on its left (`board-grip-<id>`, `touch-action="none"`, label "Hold and drag <task> to reorder") and the rest of the card scrolls the board, so a touch no longer lifts a card before the scroll starts. Card content is the component `BoardCardBody` (title/marks, subtasks with checkboxes, open button).
+
+## Column collapse (wide windows)
+- Columns stay open unless the window cannot hold them all: `boardFit` = how many open columns (min 10.5rem + gap each, the rest 40px slivers) fit beside the 21rem sidebar; `boardAutoShut` = the columns from the right past that count. A column opened by hand (`openedCols`) stays open; one shut by hand (`shutCols`) stays shut. An empty column no longer collapses by itself. Phones still show one open column. Test: "board columns collapse from the right only when they cannot all fit".
+

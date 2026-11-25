@@ -98,3 +98,4 @@
 - **Token-efficient documentation format** → [../CLAUDE.md](../CLAUDE.md)
 - **File size limits, headers** → [../CLAUDE.md](../CLAUDE.md)
 - Calendar subscriptions (ICS links, CalDAV) → backend/services/calendar-sync.md
+- Universal search (title bar / phone sheet, `GET /search`) → frontend/pages/search.md

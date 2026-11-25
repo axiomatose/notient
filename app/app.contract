@@ -193,6 +193,29 @@ shape TemplateItem
   body: string
   json: string
 
+shape FoundNote
+  id: string
+  title: string
+  sub: string
+
+shape FoundTask
+  id: string
+  title: string
+  listId: string
+  sub: string
+  done: bool
+
+shape FoundEvent
+  id: string
+  title: string
+  sub: string
+
+shape Found
+  q: string
+  notes: FoundNote[]
+  tasks: FoundTask[]
+  events: FoundEvent[]
+
 shape Templates
   owner: string
   notes: TemplateItem[]
@@ -569,9 +592,10 @@ fn hasMeta(t: Task): bool = t.dueAt != 0 or t.recurrence != "none" or t.subtaskC
 fn rowHeight(t: Task): number = 44 + (t.notes != "" ? 18 : 0) + (hasMeta(t) ? 18 : 0)
 fn rowsHeight(ts: Task[]): number = ts.length == 0 ? 36 : sum(ts.map(t => rowHeight(t)))
 fn memberOf(ms: Member[], id: string): Member = match first(ms.filter(m => m.id == id)) { case some(m) => m, case none => Member(id="", role="", name="", email="", icon="", color="", photo="") }
-// A board column shows as a sliver (icon, count, the name turned, a plus) when it is empty on a wide screen (unless opened), or on a
-// narrow one whenever it is not the open column. A board with no tasks at all keeps every column open.
-fn colShut(wide: bool, n: number, anyTasks: bool, open: string, shut: string, col: string, active: string): bool = wide ? (folded(shut, col) or (n == 0 and anyTasks and not folded(open, col))) : col != active
+// A board column shows as a sliver (icon, count, the name turned, a plus) only when the window cannot hold them all: on a wide
+// screen the columns from the right collapse until the rest fit (or one is shut by hand; one opened by hand stays open); on a
+// narrow one every column but the open one is a sliver.
+fn colShut(wide: bool, autoShut: string[], open: string, shut: string, col: string, active: string): bool = wide ? (folded(shut, col) or (autoShut.includes(col) and not folded(open, col))) : col != active
 fn folded(csv: string, col: string): bool = (" " + csv + " ").indexOf(" " + col + " ") >= 0
 fn opened(csv: string, key: string, force: bool): bool = force or folded(csv, key)
 fn touch(csv: string, key: string): string = folded(csv, key) ? csv : (csv + " " + key).trim()
@@ -685,8 +709,7 @@ fn blocksOf(lines: string[], starts: number[]): ViewBlock[] = starts.map((s, k) 
 fn folderActivity(notes: Note[], folder: string): number = match sortBy(notes.filter(n => n.folder == folder), n => n.updatedAt, "desc").at(0) { case some(n) => n.updatedAt, case none => 0 }
 
 component App
-  state notesQuery = ""
-  state searchOpen = false
+  state searchQ = ""
   state editorNoteId = ""
   state closeOnCreate = false
   state caret = 0
@@ -853,6 +876,9 @@ component App
   derive selectedTask = drawerTask != "" ? drawerTask : match stack(nav).filter(e => e.name == "taskDetail").at(-1) { case some(e) => e.params.id, case none => "" }
   derive sectionsSame = sections.owner == session.email and session.email != ""
   derive boardIds = ["none"].concat(sections.sections.map(s => s.id))
+  // Room beside the 21rem sidebar: an open column needs 10.5rem (168px) and a gap, a sliver 40px and a gap.
+  derive boardFit = max(1, min(boardIds.length, floor((winW - 336 - 24 + 12 - 52 * boardIds.length) / 128)))
+  derive boardAutoShut = boardIds.slice(boardFit)
   // Icon names the views draw that the bundle lacks: fetched once each (the probe is the name being picked).
   derive iconNames = lists.lists.map(l => l.icon).concat(sections.sections.map(s => s.icon)).concat([iconProbe, avatarIcon]).filter(n => n != "" and not isBundled(n))
   derive styleSection = sectionOf(sections.sections, styleSectionId)
@@ -919,7 +945,7 @@ component App
   derive deletedNotes = lib.notes.filter(n => n.deletedAt != 0)
   derive sortedActive = noteSort == "oldest" ? sortBy(activeNotes, n => n.updatedAt) : noteSort == "title" ? sortBy(activeNotes, n => n.title.toLowerCase()) : sortBy(activeNotes, n => n.updatedAt, "desc")
   derive sectionFolders = folderFilter == "" ? lib.folders.concat([""]) : lib.folders.filter(x => x == folderFilter or x.startsWith(folderFilter + "/"))
-  derive notesShown = sortedActive.filter(n => matchesFilter(n, notesQuery, tagFilter))
+  derive notesShown = sortedActive.filter(n => matchesFilter(n, "", tagFilter))
   derive sharedSame = shared.owner == session.email and session.email != ""
   derive notesError = pending(lib) ? "" : match failure(lib) { case some(f) => "Couldn’t refresh the notes. (" + f.code + ": " + f.message + ")", case none => "" }
   derive listsError = pending(lists) ? "" : match failure(lists) { case some(f) => "Couldn’t refresh the lists. (" + f.code + ": " + f.message + ")", case none => "" }
@@ -961,6 +987,7 @@ component App
   resource attachments = loadAttachments(openTask) as shape Attachments else empty()
   resource calendars = loadCalendars() as shape Calendars else empty()
   resource templates = loadTemplates() as shape Templates else empty()
+  resource found = searchAll(searchQ) as shape Found else empty()
   // The live channel: a ticket for each attempt, then the socket it opens (see documentation/backend/collaboration.md).
   state liveAttempt = 0
   resource liveReady = liveTicket(liveAttempt) when liveAttempt > 0 and session.signedIn as shape number else empty()
@@ -1337,13 +1364,26 @@ component App
       lastEdit = performanceNow()
     else if editorMode == "edit" and editorNoteId == "" and top(nav).name == "newNote" and performanceNow() - lastEdit >= 2000
       startNote(false)
-  action searchNotes(v: string)
-    notesQuery = v
-  action openSearch
-    searchOpen = true
-  action closeSearch
-    searchOpen = false
-    notesQuery = ""
+  // One search for the whole app: a field in the title bar (a sheet on phones) over notes, tasks and events.
+  action runSearch(v: string)
+    searchQ = v
+  action clearSearch
+    searchQ = ""
+  action openSearchSheet
+    searchQ = ""
+    showModal("search-sheet")
+  action openFoundNote(id: string)
+    close("search-sheet")
+    searchQ = ""
+    openSideNote(id)
+  action openFoundTask(listId: string, id: string)
+    close("search-sheet")
+    searchQ = ""
+    openRecentTask(listId, id)
+  action openFoundEvent(id: string)
+    close("search-sheet")
+    searchQ = ""
+    nav = push(nav, path("eventDetail", id))
   action setTagFilter(t: string)
     tagFilter = t
   action setFolderFilter(f: string)
@@ -2174,8 +2214,14 @@ component App
                 text "/" color="-exact-secondary-label" font="-exact-subheadline"
                 button press=crumbMode appearance="none" pointer-events="auto" testId="crumb-mode"
                   text (editorMode == "edit" ? "Edit" : "View") font="-exact-subheadline" color="AccentColor"
+          // Centered over the page below the sidebar, under the page's own header buttons on the right.
+          row position="absolute" top=0 left=(sideOpen ? "calc(21rem + (100% - 21rem) / 2)" : "50%") transform="translateX(-50%)" width="min(18rem, 30%)" height=44 align-items="center" padding-top=8 box-sizing="border-box" z-index=9
+            input type="search" value=searchQ input=runSearch placeholder="Search everything" aria-label="Search everything" testId="search-all" pointer-events="auto" appearance="none" width="100%" box-sizing="border-box" padding="5px 10px" border="1px solid light-dark(#d1d1d6, #3a3a3c)" border-radius=8 background-color="light-dark(#f2f2f7, #2c2c2e)"
+            if searchQ.trim() != ""
+              column position="absolute" top=44 left=0 width="26rem" max-width="90vw" max-height="70vh" overflow-y="auto" pointer-events="auto" z-index=30 box-sizing="border-box" padding=8 background-color="light-dark(#ffffff, #2c2c2e)" border-radius=14 box-shadow="0 8px 28px #00000040" testId="search-pop"
+                SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent)
         if sideOpen
-          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query=notesQuery, tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=searchNotes, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
+          DesktopSidebar(serverHost=serverCheck.host, serverState=serverCheck.state, current=nav.tab, selected=selectedNote, signedIn=session.signedIn, shown=shown, email=session.email, unread=unreadCount, notes=sideNotes, noteFolders=sectionFolders, query="", tasks=recentTaskRows, events=recentEventRows, lists=(listsSame ? lists.lists : []), folders=(foldersSame ? taskFolders.folders : []), notesOpen=sideNotesOpen, notesTall=sideNotesTall, tasksOpen=sideTasksOpen, tasksTall=sideTasksTall, openedRows=sideOpened, openListId=openList, folderDraft=folderDraft, folderError=(pending(folderAdded) ? "" : folderError), avatarUrl=avatarUrl, avatarIcon=avatarIcon, avatarColor=avatarColor, fetched=fetchedIcons, pick=pick, openListMenu=openListMenu, openNote=openSideNote, openNoteMenu=openNoteMenu, openEventMenu=openEventMenu, openTask=openRecentTask, openList=openSideList, addTask=openNewTaskIn, search=runSearch, newNote=openNewNote, trash=openTrash, newList=openNewList, editFolder=editFolderDraft, addFolder=addFolder, toggleNotes=toggleSideNotes, toggleNotesTall=toggleSideNotesTall, toggleTasks=toggleSideTasks, toggleTasksTall=toggleSideTasksTall, toggleFold=toggleSideFold, newFolder=openNewFolder)
       column flex=1 min-width=0 min-height=0 position="relative" margin-top=0
         for t in nav.tabs key=t.name
           column role="tabpanel" id=`panel-${t.name}` position="absolute" inset=0
@@ -2219,6 +2265,8 @@ component App
                           image "symbol:person"
                         if nav.tab == "notes"
                           NotifBell(count=unreadCount)
+                        button press=openSearchSheet aria-label="Search" testId="search-open"
+                          image "symbol:search"
                       if not wide
                         text "Notes" role="heading" aria-level=1 flex=1 min-width=0
                       button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-notes"
@@ -2231,28 +2279,20 @@ component App
                       button press=openTrash aria-label="Trash" testId="open-trash"
                         image "symbol:delete"
                     row gap=8 align-items="center" flex-wrap="wrap" padding="8px 16px" testId="notes-toolbar"
-                      if searchOpen
-                        input type="search" value=notesQuery input=searchNotes placeholder="Search notes" appearance="none"
-                          aria-label="Search notes" testId="notes-search" flex=1 min-width=0 autofocus=true
-                        button press=closeSearch testId="notes-ellipsis" aria-label="Close search"
-                          image "symbol:ellipsis"
-                      else
-                        button press=openSearch testId="notes-search-open" aria-label="Search"
-                          image "symbol:search"
-                        button popovertarget="tag-menu" testId="tag-button" aria-label="Tag filter"
-                          image "symbol:hashtag"
-                        button popovertarget="folder-menu" testId="folder-button" aria-label="Folder filter"
-                          image "symbol:filter"
-                        button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
-                          image "symbol:sort"
-                        button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
-                          LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=18)
-                        button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
-                          LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
-                        if folderFilter != ""
-                          text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
-                        if tagFilter != ""
-                          text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
+                      button popovertarget="tag-menu" testId="tag-button" aria-label="Tag filter"
+                        image "symbol:hashtag"
+                      button popovertarget="folder-menu" testId="folder-button" aria-label="Folder filter"
+                        image "symbol:filter"
+                      button popovertarget="sort-menu" testId="sort-button" aria-label="Sort"
+                        image "symbol:sort"
+                      button press=openNewFolder aria-label="New Folder" -exact-menu="none" testId="new-note-folder"
+                        LucideIcon(paths=["M12 10v6", "M9 13h6", "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"], color="-exact-label", size=18)
+                      button press=exportShown aria-label=(folderFilter != "" ? "Export Folder…" : "Export All Notes…") -exact-menu="none" disabled=pending(exportMade) testId="export-notes"
+                        LucideIcon(paths=["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m7 10 5 5 5-5", "M12 15V3"], color="-exact-label", size=18)
+                      if folderFilter != ""
+                        text folderFilter testId="active-folder" font="-exact-footnote" color="-exact-secondary-label"
+                      if tagFilter != ""
+                        text tagFilter testId="active-tag" font="-exact-footnote" color="-exact-secondary-label"
                     if not sameOwner
                       if pending(lib)
                         column flex=1 justify-content="center" align-items="center"
@@ -2278,7 +2318,7 @@ component App
                             row
                               text "Offline — showing your saved notes." color="-exact-secondary-label" testId="stale-note"
                         for f in sectionFolders key=f
-                          if sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, notesQuery, tagFilter)).length > 0 and not insideShut(shutFolders, f)
+                          if sortedActive.filter(n => underFolder(n, f) and matchesFilter(n, "", tagFilter)).length > 0 and not insideShut(shutFolders, f)
                             section
                               header
                                 button press=toggleFolderOpen(f) disabled=(f == "") appearance="none" padding-left=(folderDepth(f) * 16) aria-label=(f == "" ? "Unfiled" : folderShut(shutFolders, f) ? `Expand ${f}` : `Collapse ${f}`) testId=`folder-toggle-${f}`
@@ -2286,7 +2326,7 @@ component App
                                     if f != ""
                                       image "symbol:forward-chevron" width=11 height=11 transform=(folderShut(shutFolders, f) ? "rotate(0deg)" : "rotate(90deg)")
                                     text (f == "" ? "Unfiled" : lastSegment(f)) testId=`folder-${f}`
-                              for n in sortedActive.filter(n => inFolder(n, f) and not folderShut(shutFolders, f) and matchesFilter(n, notesQuery, tagFilter)) key=n.id
+                              for n in sortedActive.filter(n => inFolder(n, f) and not folderShut(shutFolders, f) and matchesFilter(n, "", tagFilter)) key=n.id
                                 button press=openNote(n.id) testId=`note-${n.id}` contextPopover="note-menu" contextmenu=openNoteMenu(n.id)
                                   column flex=1 min-width=0 gap=2 padding-top=4 padding-bottom=4
                                     text (n.title.trim() == "" ? "Untitled" : n.title) font-weight=600
@@ -2494,6 +2534,8 @@ component App
                           image "symbol:person"
                         if nav.tab == "tasks"
                           NotifBell(count=unreadCount)
+                        button press=openSearchSheet aria-label="Search" testId="search-open-tasks"
+                          image "symbol:search"
                       if not wide
                         text "Tasks" role="heading" aria-level=1 flex=1 min-width=0
                       button popovertarget="tpl-menu" aria-label="Templates" testId="templates-button-tasks"
@@ -2676,7 +2718,7 @@ component App
                       scroll testId="board" overflow-x="auto" overflow-y="hidden" flex=1 min-height=0
                         row gap=12 padding="12px 12px 88px 12px" height="100%" box-sizing="border-box" align-items="stretch"
                           for col in boardIds key=col
-                            if colShut(wide, colTasks(tasks.tasks, col, doneSectionId, "").length, tasks.tasks.length > 0, openedCols, shutCols, col, activeBoardCol)
+                            if colShut(wide, boardAutoShut, openedCols, shutCols, col, activeBoardCol)
                               column testId=`board-col-${col}` flex-shrink=0 width="2.5rem" height="100%" box-sizing="border-box" padding="8px 0" border-radius=12 background-color=tintOf(sectionOf(sections.sections, col).color) display="flex" flex-direction="column" align-items="center" gap=4
                                 button press=openBoardCol(col) appearance="none" aria-label=`Open ${boardName(sections.sections, noneName, col)}` testId=`board-open-${col}` flex-shrink=0 width="100%" display="flex" flex-direction="column" align-items="center" gap=6 padding="2px 0"
                                   if sectionOf(sections.sections, col).icon != ""
@@ -2867,6 +2909,8 @@ component App
                           image "symbol:person"
                         if nav.tab == "calendar"
                           NotifBell(count=unreadCount)
+                        button press=openSearchSheet aria-label="Search" testId="search-open-calendar"
+                          image "symbol:search"
                       text view.periodLabel role="heading" aria-level=1 testId="period-label" flex=1 min-width=0 font-size="min(-exact-title2, 22px)"
                       button press=prevPeriod aria-label="Previous" testId="prev-period"
                         image "symbol:icon.chevron-left"
@@ -3193,6 +3237,15 @@ component App
                   image u width=64 height=48 object-fit="cover" border-radius=4
         button commandfor="lightbox" command="close" aria-label="Close image" testId="lightbox-close" position="absolute" top=16 right=16 width=40 height=40 border-radius=20 background-color="#00000080" color="#ffffff" display="flex" align-items="center" justify-content="center"
           image "symbol:close"
+      dialog id="search-sheet" aria-label="Search" padding=16 testId="search-sheet"
+        column gap=10 min-width="18rem"
+          row gap=8 align-items="center"
+            input type="search" value=searchQ input=runSearch placeholder="Search notes, tasks, events" aria-label="Search everything" testId="search-sheet-input" flex=1 min-width=0 appearance="none" autofocus=true
+            button press=clearSearch commandfor="search-sheet" command="close" testId="search-sheet-close" aria-label="Close search"
+              image "symbol:close"
+          if searchQ.trim() != ""
+            column max-height="60vh" overflow-y="auto" testId="search-sheet-results"
+              SearchResults(q=searchQ, found=found, busy=pending(found), openNote=openFoundNote, openTask=openFoundTask, openEvent=openFoundEvent)
       dialog id="new-folder" aria-label="New folder" padding=20 testId="new-folder"
         column gap=12 min-width="18rem"
           text "New folder" font="-exact-headline"
@@ -4598,7 +4651,7 @@ component DesktopSidebar
                 image "symbol:delete" width=16 height=16
             if notesOpen
               row gap=6 align-items="center" padding-left=38
-                input type="search" value=query input=search placeholder="Search notes and tags" aria-label="Search notes" testId="side-search" tabindex=-1 flex=1 min-width=0 appearance="none"
+                view flex=1 min-width=0
                 button popovertarget="sort-menu" aria-label="Sort" testId="side-sort" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
                   image "symbol:sort" width=16 height=16
                 button press=newFolder aria-label="New Folder" testId="side-new-note-folder" appearance="none" width=28 height=28 flex-shrink=0 border-radius=6 display="flex" align-items="center" justify-content="center"
@@ -4705,6 +4758,41 @@ component ServerLine
       if state != "ok" and state != ""
         image "symbol:alert" color="-exact-system-red" flex-shrink=0 testId="server-bad"
       text (host == "" ? "Checking…" : host) color=(state == "auth" or state == "down" or state == "error" ? "-exact-system-red" : "-exact-secondary-label") font="-exact-caption2" line-clamp=1 flex=1 min-width=0
+
+component SearchResults
+  props
+    q: string
+    found: Found
+    busy: bool
+    openNote: action
+    openTask: action
+    openEvent: action
+  view
+    column gap=2 width="100%" testId="search-results"
+      if found.q == q.trim() and found.notes.length + found.tasks.length + found.events.length == 0 and not busy
+        text "No matches." color="-exact-secondary-label" font="-exact-footnote" padding=8 testId="search-empty"
+      if found.notes.length > 0
+        text "Notes" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for n in found.notes key=n.id
+          button press=openNote(n.id) appearance="none" width="100%" text-align="start" padding="6px 8px" border-radius=8 testId=`found-note-${n.id}`
+            column gap=1 min-width=0
+              text (n.title.trim() == "" ? "Untitled" : n.title) font-weight=600 line-clamp=1
+              if n.sub != ""
+                text n.sub font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+      if found.tasks.length > 0
+        text "Tasks" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for t in found.tasks key=t.id
+          button press=openTask(t.listId, t.id) appearance="none" width="100%" text-align="start" padding="6px 8px" border-radius=8 testId=`found-task-${t.id}`
+            column gap=1 min-width=0
+              text t.title font-weight=600 line-clamp=1 text-decoration=(t.done ? "line-through" : "none")
+              text t.sub font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
+      if found.events.length > 0
+        text "Events" color="-exact-secondary-label" font="-exact-footnote" padding="6px 8px 2px"
+        for e in found.events key=e.id
+          button press=openEvent(e.id) appearance="none" width="100%" text-align="start" padding="6px 8px" border-radius=8 testId=`found-event-${e.id}`
+            column gap=1 min-width=0
+              text e.title font-weight=600 line-clamp=1
+              text e.sub font="-exact-footnote" color="-exact-secondary-label" line-clamp=1
 
 component NotifBell
   props

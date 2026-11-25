@@ -893,6 +893,26 @@ const sources: Sources = {
     }
     return { owner, notes, lists };
   },
+  // Search across the person's own notes, tasks and events (the server decides what matches).
+  searchAll: async ([q], store): Promise<Result<'searchAll'>> => {
+    const query = String(q).trim();
+    if (who(store) === '' || query === '') return { q: query, notes: [], tasks: [], events: [] };
+    const r = await callWith(store, `/search?q=${encodeURIComponent(query)}&limit=8`);
+    if (!r.ok) return { q: query, notes: [], tasks: [], events: [] };
+    const b = r.body as { notes?: { id: string; title: string; folder?: string; snippet?: string; vault?: boolean }[]; tasks?: { id: string; title: string; listId: string; listName: string; isDone?: boolean }[]; events?: { id: string; title: string; startTime: number; allDay?: boolean; location?: string | null }[] };
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const when = (ms: number, allDay: boolean) => {
+      const d = new Date(ms);
+      const day = `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+      return allDay ? day : `${day} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    };
+    return {
+      q: query,
+      notes: (b.notes ?? []).map((n) => ({ id: n.id, title: n.title, sub: n.snippet && n.snippet !== '' ? n.snippet : n.vault ? 'Vault note' : (n.folder ?? '') })),
+      tasks: (b.tasks ?? []).map((t) => ({ id: t.id, title: t.title, listId: t.listId, sub: t.listName, done: t.isDone === true })),
+      events: (b.events ?? []).map((e) => ({ id: e.id, title: e.title, sub: `${when(e.startTime, e.allDay === true)}${e.location ? ` · ${e.location}` : ''}` })),
+    };
+  },
   // A folder made on purpose, before any note is filed in it; the parent path is optional.
   makeNoteFolder: async ([name, parent], store) =>
     reply(await callWith(store, '/note-folders', { method: 'POST', body: JSON.stringify({ name, parent }) })),
